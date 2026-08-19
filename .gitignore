@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+Descargas/
+_tmp_descargas/
+faltantes_sanofi_mexico.txt
+*.xlsx

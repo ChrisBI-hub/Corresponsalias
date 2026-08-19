@@ -1,0 +1,346 @@
+"""
+manzanillo.py  (antes "oñate_extraccion.py" — renombrado sin ñ por
+                portabilidad de import/filesystem en Linux)
+=============================================================================
+Descarga TODOS los archivos digitales disponibles por referencia en el
+portal de Manzanillo (OWCIA / satoWeb) y los guarda ya clasificados en:
+
+    Descargas/{RazonSocial}/{Año}/{Aduana}/{Referencia}/{Referencia}_{Pedimento}_{Tag}.ext
+
+Clasificaciones descargadas por cada referencia:
+  - GASTOS COMPROBADOS
+  - Expediente aduanal (CASAWIN)              código base '7777|<id>|0'
+  - Expediente aduanal (CASAWIN) Expedientes    código base '7777|<id>|10'  (descarga el ZIP)
+  - 7. Proforma glosada                         código base '4|<id>|5'
+  - 11. DODAs                                   código base '4|<id>|15'
+
+El '<id>' de expediente NO es fijo: lo genera el portal para cada
+referencia consultada, así que se extrae dinámicamente del árbol de
+documentos (onclick="CargarDocumentosPorClasificacion('7777|<id>|0')")
+cada vez que se abre una referencia. Ver obtener_id_expediente().
+
+Las referencias y su metadata (Cliente, Año, Aduana, Pedimento) las resuelve
+main.py a partir de Sanofi_V6.sql. Este script ya NO consulta SQL por su
+cuenta cuando se ejecuta desde main.py.
+
+NOTA
+----
+No fue posible probar este script contra el portal real (requiere sesión
+autenticada). Los selectores de las clasificaciones se basan en el mismo
+patrón de grid (tabla #lstDocumentos, columna 'lstDocumentos_act') que ya
+usaba el bloque de CASAWIN original. Revisa los puntos marcados con
+"# VERIFICAR" la primera vez que corras cada clasificación.
+
+Dependencias:
+    pip install selenium
+"""
+
+import os
+import re
+import time
+import shutil
+import logging
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+import common
+
+FECHA_INI = "2025-12-01"
+FECHA_FIN = "2026-01-31"
+TIMEOUT_DESCARGA = 30
+
+# (prefijo, sufijo, etiqueta_para_log, tag_para_nombre_de_archivo)
+# El código real que recibe CargarDocumentosPorClasificacion() se arma como
+# f"{prefijo}|{id_expediente}|{sufijo}" con el id extraído en vivo.
+CLASIFICACIONES_DOCUMENTOS = [
+    ("7777", "0",  "Expediente aduanal (CASAWIN)",               "CASAWIN"),
+    ("7777", "10", "Expediente aduanal (CASAWIN) - Expedientes",  "EXPEDIENTES"),
+    ("4",    "5",  "7. Proforma glosada",                         "PROFORMA_GLOSADA"),
+    ("4",    "15", "11. DODAs",                                   "DODA"),
+]
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
+class ManzanilloExtractor:
+
+    def __init__(self, headless=False):
+        self.headless = headless
+        self.driver = None
+        self.wait = None
+
+    # -------------------------------------------------------------------------
+    # DRIVER / LOGIN
+    # -------------------------------------------------------------------------
+
+    def esperar_bloqueo(self):
+        try:
+            self.wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "blockUI")))
+            self.wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "blockOverlay")))
+            time.sleep(0.5)
+        except Exception:
+            pass
+
+    def configurar_driver(self):
+        options = webdriver.FirefoxOptions()
+        if self.headless:
+            options.add_argument("--headless")
+        options.set_preference("browser.download.folderList", 2)
+        options.set_preference("browser.download.dir", common.PATH_TEMP_DESCARGAS)
+        options.set_preference(
+            "browser.helperApps.neverAsk.saveToDisk",
+            "application/zip,application/pdf,application/xml,text/xml,application/octet-stream"
+        )
+        options.set_preference("pdfjs.disabled", True)
+        options.set_preference("browser.download.manager.showWhenStarting", False)
+        self.driver = webdriver.Firefox(options=options)
+        self.wait = WebDriverWait(self.driver, 25)
+
+    def ejecutar_login_y_busqueda(self):
+        logger.info("🔑 Iniciando sesión en OWCIA...")
+        if not common.USUARIO_OWCIA or not common.CONTRA_OWCIA:
+            raise RuntimeError("Faltan OWCIA_USER / OWCIA_PASS en el entorno (.env).")
+
+        self.driver.get("https://portal.owcia.com/owcia/satoWeb/Login.html")
+        self.wait.until(EC.presence_of_element_located((By.ID, "usuario"))).send_keys(common.USUARIO_OWCIA)
+        self.driver.find_element(By.ID, "pass").send_keys(common.CONTRA_OWCIA)
+        self.driver.find_element(By.CSS_SELECTOR, "input[value='Accesar']").click()
+
+        btn_aduana = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'Aduana')]")))
+        self.driver.execute_script("arguments[0].click();", btn_aduana)
+        self.esperar_bloqueo()
+        time.sleep(2)
+
+        frames = self.driver.find_elements(By.TAG_NAME, "iframe")
+        if frames:
+            self.driver.switch_to.frame(0)
+
+        f_ini = self.wait.until(EC.presence_of_element_located((By.ID, "txtInicial")))
+        self.driver.execute_script(f"arguments[0].value = '{FECHA_INI}';", f_ini)
+        self.driver.execute_script(f"document.getElementById('txtFinal').value = '{FECHA_FIN}';")
+
+        btn_buscar = self.driver.find_element(By.ID, "btnBuscar")
+        self.driver.execute_script("arguments[0].click();", btn_buscar)
+        self.esperar_bloqueo()
+        time.sleep(4)
+
+    # -------------------------------------------------------------------------
+    # id de expediente dinámico (cambia por cada referencia consultada)
+    # -------------------------------------------------------------------------
+
+    def obtener_id_expediente(self):
+        """
+        Extrae el id de expediente (segundo segmento del código que recibe
+        CargarDocumentosPorClasificacion) desde cualquier nodo del árbol de
+        documentos ya visible para la referencia actual. Este id lo genera
+        el portal en automático al abrir la referencia — nunca es fijo.
+        """
+        patron = re.compile(r"CargarDocumentosPorClasificacion\('(\d+)\|(\d+)\|(\d+)'\)")
+        for _ in range(3):
+            nodos = self.driver.find_elements(
+                By.XPATH, "//a[contains(@onclick,'CargarDocumentosPorClasificacion')]"
+            )
+            for nodo in nodos:
+                onclick = nodo.get_attribute("onclick") or ""
+                m = patron.search(onclick)
+                if m:
+                    return m.group(2)
+            time.sleep(1)
+        return None
+
+    # -------------------------------------------------------------------------
+    # Descarga genérica: dispara en carpeta temporal y mueve ya clasificado
+    # -------------------------------------------------------------------------
+
+    def archivos_en_temp(self):
+        return set(os.listdir(common.PATH_TEMP_DESCARGAS))
+
+    def esperar_descarga_temp(self, archivos_previos, timeout=TIMEOUT_DESCARGA):
+        """
+        Espera a que aparezca un archivo NUEVO y completo (no .part/.tmp) en
+        la carpeta temporal de descargas del navegador. Devuelve su ruta o None.
+        """
+        limite = time.time() + timeout
+        while time.time() < limite:
+            actuales = set(os.listdir(common.PATH_TEMP_DESCARGAS))
+            candidatos = [f for f in (actuales - archivos_previos)
+                          if not f.endswith(('.part', '.tmp', '.crdownload'))]
+            if candidatos:
+                ruta = os.path.join(common.PATH_TEMP_DESCARGAS, candidatos[0])
+                try:
+                    tam1 = os.path.getsize(ruta)
+                    time.sleep(0.8)
+                    tam2 = os.path.getsize(ruta)
+                except FileNotFoundError:
+                    time.sleep(0.5)
+                    continue
+                if tam1 == tam2:
+                    return ruta
+            time.sleep(0.5)
+        return None
+
+    def mover_a_clasificacion(self, ruta_temp: str, meta: dict, referencia: str, tag: str) -> str:
+        ext = os.path.splitext(ruta_temp)[1] or ".bin"
+        destino = common.construir_ruta_destino(meta, referencia, tag, ext)
+        shutil.move(ruta_temp, destino)
+        return destino
+
+    def descargar_por_clasificacion(self, referencia: str, meta: dict, codigo: str, etiqueta: str, tag: str) -> int:
+        """
+        Llama directamente a la función JS CargarDocumentosPorClasificacion(codigo)
+        (equivalente a hacer click en el nodo del árbol) y descarga TODOS los
+        archivos que aparezcan en la tabla resultante (#lstDocumentos).
+
+        # VERIFICAR: se asume que el grid siempre usa el id 'lstDocumentos' y
+        # la columna de descarga 'lstDocumentos_act', igual que el bloque de
+        # CASAWIN ya validado.
+        """
+        logger.info(f"   [{referencia}] 📂 Cargando '{etiqueta}' (código {codigo})...")
+        try:
+            self.driver.execute_script(f"CargarDocumentosPorClasificacion('{codigo}');")
+            self.esperar_bloqueo()
+            time.sleep(1.5)
+
+            self.wait.until(EC.presence_of_element_located((By.XPATH, "//table[@id='lstDocumentos']")))
+            filas = self.driver.find_elements(
+                By.XPATH,
+                "//table[@id='lstDocumentos']/tbody/tr[@role='row' and not(contains(@class,'jqgfirstrow'))]"
+            )
+        except Exception:
+            logger.info(f"   [{referencia}] — Sin documentos en '{etiqueta}'.")
+            return 0
+
+        total_filas = len(filas)
+        if total_filas == 0:
+            logger.info(f"   [{referencia}] — '{etiqueta}' sin archivos.")
+            return 0
+
+        descargados = 0
+        for idx in range(total_filas):
+            try:
+                # Re-localizar en cada iteración: el grid puede re-renderizarse
+                filas_actuales = self.driver.find_elements(
+                    By.XPATH,
+                    "//table[@id='lstDocumentos']/tbody/tr[@role='row' and not(contains(@class,'jqgfirstrow'))]"
+                )
+                fila = filas_actuales[idx]
+                btn_descargar = fila.find_element(
+                    By.XPATH, ".//td[@aria-describedby='lstDocumentos_act']//img[@title='Descargar']"
+                )
+                previos = self.archivos_en_temp()
+                self.driver.execute_script("arguments[0].click();", btn_descargar)
+
+                ruta_temp = self.esperar_descarga_temp(previos)
+                if ruta_temp:
+                    destino = self.mover_a_clasificacion(ruta_temp, meta, referencia, tag)
+                    logger.info(f"   [{referencia}] ✅ Guardado: {destino}")
+                    descargados += 1
+                else:
+                    logger.warning(f"   [{referencia}] ⚠ Fila {idx+1}/{total_filas} de '{etiqueta}': no se detectó descarga.")
+
+            except Exception as e:
+                logger.error(f"   [{referencia}] ❌ Error en fila {idx+1} de '{etiqueta}': {e}")
+
+        logger.info(f"   [{referencia}] ✅ {descargados}/{total_filas} archivo(s) de '{etiqueta}' descargado(s).")
+        return descargados
+
+    def descargar_gastos_comprobados(self, referencia: str, meta: dict):
+        try:
+            btn_gastos = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'GASTOS COMPROBADOS')]")))
+            self.driver.execute_script("arguments[0].click();", btn_gastos)
+            time.sleep(2)
+        except Exception:
+            logger.info(f"   [{referencia}] — Sin 'GASTOS COMPROBADOS'.")
+            return
+
+        filas_gastos = self.driver.find_elements(
+            By.XPATH,
+            "//table[@id='lstDocumentosGastos']/tbody/tr[@role='row' and not(contains(@class,'jqgfirstrow'))]"
+        )
+        for fila in filas_gastos:
+            try:
+                btn_desc = fila.find_element(By.XPATH, ".//td[@aria-describedby='lstDocumentosGastos_act']//img")
+                previos = self.archivos_en_temp()
+                self.driver.execute_script("arguments[0].click();", btn_desc)
+                ruta_temp = self.esperar_descarga_temp(previos)
+                if ruta_temp:
+                    destino = self.mover_a_clasificacion(ruta_temp, meta, referencia, "GASTOS")
+                    logger.info(f"   [{referencia}] ✅ Guardado: {destino}")
+                else:
+                    logger.warning(f"   [{referencia}] ⚠ No se detectó descarga de un gasto comprobado.")
+            except Exception as e:
+                logger.error(f"   [{referencia}] ❌ Error descargando gasto comprobado: {e}")
+
+    # -------------------------------------------------------------------------
+    # DESCARGA POR REFERENCIA (Gastos + las 4 clasificaciones)
+    # -------------------------------------------------------------------------
+
+    def descargar_expedientes(self, referencias: list[str], metadata: dict):
+        for ref in referencias:
+            meta = metadata.get(ref)
+            if not meta:
+                logger.warning(f"   [{ref}] ⚠ Sin metadata (no viene de la consulta SQL). Se omite.")
+                continue
+
+            logger.info(f"📦 Procesando Referencia: {ref}")
+            try:
+                xpath_img = f"//tr[.//a[contains(text(), '{ref}')]]//img[@title='Mostrar documentos']"
+                self.driver.execute_script(
+                    "arguments[0].click();",
+                    self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath_img)))
+                )
+                self.esperar_bloqueo()
+                time.sleep(1)
+
+                self.descargar_gastos_comprobados(ref, meta)
+
+                id_expediente = self.obtener_id_expediente()
+                if not id_expediente:
+                    logger.warning(
+                        f"   [{ref}] ⚠ No se pudo determinar el id de expediente; "
+                        f"se omiten CASAWIN/EXPEDIENTES/Proforma/DODA."
+                    )
+                else:
+                    for prefijo, sufijo, etiqueta, tag in CLASIFICACIONES_DOCUMENTOS:
+                        codigo = f"{prefijo}|{id_expediente}|{sufijo}"
+                        self.descargar_por_clasificacion(ref, meta, codigo, etiqueta, tag)
+
+                self.driver.find_element(By.XPATH, "//span[contains(@class, 'ui-icon-closethick')]").click()
+                time.sleep(1)
+
+            except Exception as e:
+                logger.error(f"❌ Error en {ref}: {e}")
+                try:
+                    self.driver.execute_script("document.querySelector('.ui-icon-closethick').click();")
+                except Exception:
+                    pass
+
+    # -------------------------------------------------------------------------
+    # PUNTO DE ENTRADA
+    # -------------------------------------------------------------------------
+
+    def procesar(self, referencias: list[str], metadata: dict):
+        """Punto de entrada usado por main.py."""
+        if not referencias:
+            logger.info("No hay referencias de Manzanillo para procesar.")
+            return
+        try:
+            self.configurar_driver()
+            self.ejecutar_login_y_busqueda()
+            self.descargar_expedientes(referencias, metadata)
+        finally:
+            if self.driver is not None:
+                self.driver.quit()
+                self.driver = None
+            logger.info("🎉 Manzanillo: proceso finalizado.")
+
+
+# =============================================================================
+if __name__ == "__main__":
+    # Ejecución independiente (sin main.py): arma su propia metadata desde SQL.
+    df = common.ejecutar_query_v6()
+    metadata, _, grupos_manzanillo, _ = common.construir_metadata_y_grupos(df)
+    ManzanilloExtractor(headless=False).procesar(grupos_manzanillo, metadata)

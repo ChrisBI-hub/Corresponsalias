@@ -1,0 +1,8 @@
+selenium
+sqlalchemy
+pyodbc
+pandas
+requests
+pdfplumber
+openpyxl
+python-dotenv
