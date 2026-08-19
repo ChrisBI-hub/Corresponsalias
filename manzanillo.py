@@ -99,6 +99,22 @@ class ManzanilloExtractor:
         self.driver = webdriver.Firefox(options=options)
         self.wait = WebDriverWait(self.driver, 25)
 
+    def capturar_diagnostico(self, nombre: str):
+        """
+        Guarda un screenshot + el HTML de la página actual en _debug/ dentro
+        de PROYECTO_BASE. Úsalo cuando un selector no encuentra el elemento
+        esperado: manda esos dos archivos para ajustar el XPath/ID exacto.
+        """
+        carpeta = os.path.join(common.PATH_PROYECTO_BASE, "_debug")
+        os.makedirs(carpeta, exist_ok=True)
+        try:
+            self.driver.save_screenshot(os.path.join(carpeta, f"{nombre}.png"))
+            with open(os.path.join(carpeta, f"{nombre}.html"), "w", encoding="utf-8") as f:
+                f.write(self.driver.page_source)
+            logger.error(f"🩺 Diagnóstico guardado en {carpeta}/{nombre}.png y {nombre}.html")
+        except Exception as e:
+            logger.error(f"No se pudo guardar diagnóstico '{nombre}': {e}")
+
     def ejecutar_login_y_busqueda(self):
         logger.info("🔑 Iniciando sesión en OWCIA...")
         if not common.USUARIO_OWCIA or not common.CONTRA_OWCIA:
@@ -108,8 +124,20 @@ class ManzanilloExtractor:
         self.wait.until(EC.presence_of_element_located((By.ID, "usuario"))).send_keys(common.USUARIO_OWCIA)
         self.driver.find_element(By.ID, "pass").send_keys(common.CONTRA_OWCIA)
         self.driver.find_element(By.CSS_SELECTOR, "input[value='Accesar']").click()
+        time.sleep(2)
 
-        btn_aduana = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'Aduana')]")))
+        # XPath insensible a mayúsculas/minúsculas: el menú puede mostrar
+        # "Aduana", "ADUANA" o "aduana" según el portal.
+        xpath_aduana = (
+            "//a[contains("
+            "translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚÑ', 'abcdefghijklmnopqrstuvwxyzáéíóúñ'), "
+            "'aduana')]"
+        )
+        try:
+            btn_aduana = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath_aduana)))
+        except Exception:
+            self.capturar_diagnostico("login_sin_boton_aduana")
+            raise
         self.driver.execute_script("arguments[0].click();", btn_aduana)
         self.esperar_bloqueo()
         time.sleep(2)
@@ -118,7 +146,11 @@ class ManzanilloExtractor:
         if frames:
             self.driver.switch_to.frame(0)
 
-        f_ini = self.wait.until(EC.presence_of_element_located((By.ID, "txtInicial")))
+        try:
+            f_ini = self.wait.until(EC.presence_of_element_located((By.ID, "txtInicial")))
+        except Exception:
+            self.capturar_diagnostico("busqueda_sin_txtInicial")
+            raise
         self.driver.execute_script(f"arguments[0].value = '{FECHA_INI}';", f_ini)
         self.driver.execute_script(f"document.getElementById('txtFinal').value = '{FECHA_FIN}';")
 
@@ -313,6 +345,7 @@ class ManzanilloExtractor:
 
             except Exception as e:
                 logger.error(f"❌ Error en {ref}: {e}")
+                self.capturar_diagnostico(f"error_referencia_{ref}")
                 try:
                     self.driver.execute_script("document.querySelector('.ui-icon-closethick').click();")
                 except Exception:
