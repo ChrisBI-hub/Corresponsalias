@@ -19,6 +19,15 @@ referencia consultada, así que se extrae dinámicamente del árbol de
 documentos (onclick="CargarDocumentosPorClasificacion('7777|<id>|0')")
 cada vez que se abre una referencia. Ver obtener_id_expediente().
 
+Navegación por referencia (según el diagrama de flujo real de Oñate):
+  1. Login (sin menús intermedios: no hay un botón "Aduana").
+  2. Por cada referencia: cuadro de búsqueda rápida (#txtValorRapido) +
+     ObtenerConsultaRapida() — NO el buscador por rango de fechas, que es
+     para cuando todavía no se sabe si la referencia existe en el portal.
+  3. Click en el ícono "Mostrar documentos" de la fila resultante.
+  4. GASTOS COMPROBADOS / EXPEDIENTES (CASAWIN) / CONTROL INTERNO
+     (Proforma glosada, DODAs) ya visibles en el árbol de clasificación.
+
 Las referencias y su metadata (Cliente, Año, Aduana, Pedimento) las resuelve
 main.py a partir de Sanofi_V6.sql. Este script ya NO consulta SQL por su
 cuenta cuando se ejecuta desde main.py.
@@ -26,10 +35,11 @@ cuenta cuando se ejecuta desde main.py.
 NOTA
 ----
 No fue posible probar este script contra el portal real (requiere sesión
-autenticada). Los selectores de las clasificaciones se basan en el mismo
-patrón de grid (tabla #lstDocumentos, columna 'lstDocumentos_act') que ya
-usaba el bloque de CASAWIN original. Revisa los puntos marcados con
-"# VERIFICAR" la primera vez que corras cada clasificación.
+autenticada). La navegación de búsqueda rápida y clasificaciones se basa
+en el diagrama de flujo real de Oñate que compartió el usuario. Revisa los
+puntos marcados con "# VERIFICAR" la primera vez que corras cada paso, y
+si algo no encuentra el elemento esperado revisa _debug/ (ver
+capturar_diagnostico) para ajustar el selector exacto.
 
 Dependencias:
     pip install selenium
@@ -47,8 +57,6 @@ from selenium.webdriver.support import expected_conditions as EC
 
 import common
 
-FECHA_INI = "2025-12-01"
-FECHA_FIN = "2026-01-31"
 TIMEOUT_DESCARGA = 30
 
 # (prefijo, sufijo, etiqueta_para_log, tag_para_nombre_de_archivo)
@@ -115,49 +123,53 @@ class ManzanilloExtractor:
         except Exception as e:
             logger.error(f"No se pudo guardar diagnóstico '{nombre}': {e}")
 
-    def ejecutar_login_y_busqueda(self):
-        logger.info("🔑 Iniciando sesión en OWCIA...")
+    def ejecutar_login(self):
+        """
+        Solo el login. La búsqueda por rango de fechas (Aduana > Fecha >
+        Buscar) del portal es para cuando todavía no se sabe si una
+        referencia existe en Oñate; como nosotros ya conocemos exactamente
+        qué referencias buscar (vienen del SQL), usamos el cuadro de
+        búsqueda rápida por cada una — ver buscar_referencia_rapida().
+        """
+        logger.info("🔑 Iniciando sesión en OWCIA (Oñate)...")
         if not common.USUARIO_OWCIA or not common.CONTRA_OWCIA:
             raise RuntimeError("Faltan OWCIA_USER / OWCIA_PASS en el entorno (.env).")
 
         self.driver.get("https://portal.owcia.com/owcia/satoWeb/Login.html")
-        self.wait.until(EC.presence_of_element_located((By.ID, "usuario"))).send_keys(common.USUARIO_OWCIA)
-        self.driver.find_element(By.ID, "pass").send_keys(common.CONTRA_OWCIA)
-        self.driver.find_element(By.CSS_SELECTOR, "input[value='Accesar']").click()
-        time.sleep(2)
-
-        # XPath insensible a mayúsculas/minúsculas: el menú puede mostrar
-        # "Aduana", "ADUANA" o "aduana" según el portal.
-        xpath_aduana = (
-            "//a[contains("
-            "translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚÑ', 'abcdefghijklmnopqrstuvwxyzáéíóúñ'), "
-            "'aduana')]"
-        )
         try:
-            btn_aduana = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath_aduana)))
+            self.wait.until(EC.presence_of_element_located((By.ID, "usuario"))).send_keys(common.USUARIO_OWCIA)
+            self.driver.find_element(By.ID, "pass").send_keys(common.CONTRA_OWCIA)
+            self.driver.find_element(By.CSS_SELECTOR, "input[value='Accesar']").click()
         except Exception:
-            self.capturar_diagnostico("login_sin_boton_aduana")
+            self.capturar_diagnostico("login_fallo")
             raise
-        self.driver.execute_script("arguments[0].click();", btn_aduana)
         self.esperar_bloqueo()
         time.sleep(2)
 
-        frames = self.driver.find_elements(By.TAG_NAME, "iframe")
-        if frames:
-            self.driver.switch_to.frame(0)
+    def buscar_referencia_rapida(self, referencia: str) -> bool:
+        """
+        Busca una referencia puntual con el cuadro de búsqueda rápida
+        (input#txtValorRapido + ObtenerConsultaRapida()), tal como lo
+        documenta el flujo real de Oñate. Devuelve True si la búsqueda
+        encontró resultados (aparece el ícono "Mostrar documentos").
+        """
+        try:
+            campo = self.wait.until(EC.presence_of_element_located((By.ID, "txtValorRapido")))
+        except Exception:
+            self.capturar_diagnostico("sin_txtValorRapido")
+            raise
+
+        campo.clear()
+        campo.send_keys(referencia)
+        self.driver.execute_script("ObtenerConsultaRapida();")
+        self.esperar_bloqueo()
+        time.sleep(2)
 
         try:
-            f_ini = self.wait.until(EC.presence_of_element_located((By.ID, "txtInicial")))
+            self.wait.until(EC.presence_of_element_located((By.XPATH, "//img[@title='Mostrar documentos']")))
+            return True
         except Exception:
-            self.capturar_diagnostico("busqueda_sin_txtInicial")
-            raise
-        self.driver.execute_script(f"arguments[0].value = '{FECHA_INI}';", f_ini)
-        self.driver.execute_script(f"document.getElementById('txtFinal').value = '{FECHA_FIN}';")
-
-        btn_buscar = self.driver.find_element(By.ID, "btnBuscar")
-        self.driver.execute_script("arguments[0].click();", btn_buscar)
-        self.esperar_bloqueo()
-        time.sleep(4)
+            return False
 
     # -------------------------------------------------------------------------
     # id de expediente dinámico (cambia por cada referencia consultada)
@@ -319,11 +331,13 @@ class ManzanilloExtractor:
 
             logger.info(f"📦 Procesando Referencia: {ref}")
             try:
-                xpath_img = f"//tr[.//a[contains(text(), '{ref}')]]//img[@title='Mostrar documentos']"
-                self.driver.execute_script(
-                    "arguments[0].click();",
-                    self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath_img)))
-                )
+                if not self.buscar_referencia_rapida(ref):
+                    logger.warning(f"   [{ref}] ⚠ Sin resultados en la búsqueda rápida. Se omite.")
+                    self.capturar_diagnostico(f"sin_resultado_{ref}")
+                    continue
+
+                btn_mostrar = self.driver.find_element(By.XPATH, "//img[@title='Mostrar documentos']")
+                self.driver.execute_script("arguments[0].click();", btn_mostrar)
                 self.esperar_bloqueo()
                 time.sleep(1)
 
@@ -362,7 +376,7 @@ class ManzanilloExtractor:
             return
         try:
             self.configurar_driver()
-            self.ejecutar_login_y_busqueda()
+            self.ejecutar_login()
             self.descargar_expedientes(referencias, metadata)
         finally:
             if self.driver is not None:
