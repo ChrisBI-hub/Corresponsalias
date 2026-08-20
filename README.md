@@ -18,14 +18,25 @@ Sanofi_V6.sql   consulta maestra (se ejecuta tal cual, sin modificar WHERE ni fe
 ## Clasificación de archivos descargados
 
 ```
-Descargas/{RazonSocial}/{Año}/{Aduana}/{Referencia}/{Referencia}_{Pedimento}_{Tag}.ext
+Descargas/{RazonSocial}/{Año}/{Aduana}/REF-{Referencia} - PEDIMENTO {Pedimento}/{tipo_documento}.ext
+```
+
+Ejemplo:
+
+```
+Descargas/SANOFI MEXICO S.A. DE C.V./2026/470 - NUEVO LAREDO/REF-LT2591286 - PEDIMENTO 12345678/
+    pedimento_completo.pdf
+    foto_mercancia.jpeg
+    foto_mercancia_1.jpeg
+    cove_acuse_xml.xml
+    ...
 ```
 
 - `RazonSocial`: nombre completo del `Cliente` tal como aparece en el WHERE del SQL.
 - `Año`: año de `[Fecha de Pago funcion]`.
-- `Aduana`: `LAREDO` o `MANZANILLO` (columna `[Tipo Sucursal]`).
+- `Aduana`: columna `[Aduana/Sección Despacho]` (código + nombre, ej. `470 - NUEVO LAREDO`); si viene vacía se usa `[Tipo Sucursal]` (`LAREDO`/`MANZANILLO`) como respaldo.
 - `Pedimento`: viene directo de la columna `Pedimento` de la consulta.
-- `Tag`: tipo de documento (ej. `CASAWIN`, `EXPEDIENTES`, `PROFORMA_GLOSADA`, `DODA`, `GASTOS`, o la etiqueta del documento en Laredo).
+- `tipo_documento`: nombre del documento tal como lo entrega el portal (ej. `PEDIMENTO COMPLETO`, `FOTO MERCANCIA`, `CASAWIN`, `PROFORMA_GLOSADA`, `DODA`, `GASTOS`), en minúsculas y con guiones bajos. Si hay varios del mismo tipo en la misma referencia (ej. varias fotos), se numeran automáticamente (`_1`, `_2`, ...).
 
 Las referencias de **SANOFI MEXICO S.A. DE C.V.** que no tengan credenciales
 en el portal Laredo no se descargan; se registran en

@@ -4,7 +4,7 @@ laredo.py
 Descarga TODOS los documentos disponibles de cada referencia LT desde
 SLAM.Digital y los guarda ya clasificados en:
 
-    Descargas/{RazonSocial}/{Año}/{Aduana}/{Referencia}/{Referencia}_{Pedimento}_{Tag}.pdf
+    Descargas/{RazonSocial}/{Año}/{Aduana}/REF-{Referencia} - PEDIMENTO {Pedimento}/{tipo_documento}.ext
 
 Las referencias y su metadata (Cliente, Año, Aduana, Pedimento) las resuelve
 main.py a partir de Sanofi_V6.sql. Este script ya NO consulta SQL por su
@@ -14,10 +14,17 @@ descarga.
 Estrategia de descarga (por cada documento encontrado en la carpeta de la
 referencia):
   1. Navegar a ConsultaRefGrupo.aspx?...&ref=LT...
-  2. Localizar TODOS los bloques de documento disponibles (div.G000)
-  3. Por cada uno: abrir VisorB.aspx con Selenium  -> genera el PDF en /tmp/ del servidor
-  4. Extraer la URL /tmp/{id}.pdf del botón "Abrir" dentro del Visor
-  5. Descargar el PDF con requests reutilizando cookies actualizadas de Selenium
+  2. Localizar TODOS los bloques de documento disponibles (div.G000) — cada
+     referencia puede traer decenas (PEDIMENTO COMPLETO, FOTO MERCANCIA,
+     FACTURA, COVE, DODA, EDOCUMENT, XML de cuenta de gastos, etc.), NO
+     solo PDFs: también hay imágenes (jpeg), XML y TXT.
+  3. Por cada uno: abrir VisorB.aspx con Selenium -> genera el archivo en
+     /tmp/ del servidor.
+  4. Extraer la URL /tmp/{id}.{ext} del botón "Abrir" dentro del Visor.
+  5. Descargar el archivo con requests reutilizando cookies de Selenium,
+     usando el "content_type" real que ya viene en la URL del documento
+     (pdf/jpeg/xml/txt) — antes se asumía PDF para todo y se descartaban
+     silenciosamente los demás tipos (bug que dejaba "solo un documento").
 
 Dependencias:
     pip install selenium sqlalchemy pyodbc pandas requests
@@ -25,9 +32,11 @@ Dependencias:
 """
 
 import os
+import re
 import time
 import logging
 import requests
+from urllib.parse import urlparse, parse_qs
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -38,6 +47,18 @@ import common
 
 URL_LOGIN = "https://slamnldo.alvelais.mx/slamdigital4/default.aspx"
 URL_BASE  = "http://slamnldo.alvelais.mx/slamdigital4"
+
+# El tile de cada documento en ConsultaRefGrupo.aspx trae su propio
+# "content_type" en la URL del VisorB (ej. ...&content_type=jpeg&...).
+# Ese valor manda sobre cualquier suposición: ya NO se asume que todo es PDF.
+EXTENSIONES_POR_CONTENT_TYPE = {
+    "pdf":  ".pdf",
+    "jpeg": ".jpg",
+    "jpg":  ".jpg",
+    "png":  ".png",
+    "xml":  ".xml",
+    "txt":  ".txt",
+}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -100,15 +121,35 @@ class LaredoExtractor:
         for cookie in self.driver.get_cookies():
             self.session.cookies.set(cookie["name"], cookie["value"])
 
+    def capturar_diagnostico(self, nombre: str):
+        """
+        Guarda un screenshot + el HTML de la página actual en _debug/ dentro
+        de PROYECTO_BASE. Úsalo cuando un selector no encuentra el elemento
+        esperado: manda esos dos archivos para ajustar el XPath exacto.
+        """
+        carpeta = os.path.join(common.PATH_PROYECTO_BASE, "_debug")
+        os.makedirs(carpeta, exist_ok=True)
+        try:
+            self.driver.save_screenshot(os.path.join(carpeta, f"{nombre}.png"))
+            with open(os.path.join(carpeta, f"{nombre}.html"), "w", encoding="utf-8") as f:
+                f.write(self.driver.page_source)
+            logger.error(f"🩺 Diagnóstico guardado en {carpeta}/{nombre}.png y {nombre}.html")
+        except Exception as e:
+            logger.error(f"No se pudo guardar diagnóstico '{nombre}': {e}")
+
     # -------------------------------------------------------------------------
-    # PROCESAR UNA REFERENCIA (TODOS los documentos)
+    # PROCESAR UNA REFERENCIA (TODOS los documentos, de cualquier tipo)
     # -------------------------------------------------------------------------
 
-    def obtener_todos_los_documentos(self, ref: str) -> list[tuple[str, str]]:
+    def obtener_todos_los_documentos(self, ref: str) -> list[dict]:
         """
         Navega a la página de resultados de la referencia y devuelve una
-        lista de (etiqueta, href_visor) para TODOS los documentos
-        disponibles en esa carpeta.
+        lista de dicts {etiqueta, extension, href} para TODOS los
+        documentos disponibles en esa carpeta (PDF, imágenes, XML, TXT).
+
+        El content_type real de cada documento viene en la propia URL de
+        VisorB.aspx (parámetro "content_type"), así que se lee de ahí en
+        vez de asumir que todo es PDF.
         """
         token   = "AutoScriptABC1234"
         url_ref = (
@@ -124,6 +165,7 @@ class LaredoExtractor:
             )
         except Exception:
             logger.warning(f"   [{ref}] ⚠ No se encontraron bloques de documentos en la carpeta.")
+            self.capturar_diagnostico(f"sin_documentos_{ref}")
             return []
 
         bloques = self.driver.find_elements(By.XPATH, "//div[contains(@class,'G000')]")
@@ -138,19 +180,28 @@ class LaredoExtractor:
             if not href:
                 continue
 
-            try:
-                etiqueta = bloque.find_element(By.XPATH, ".//span").text.strip()
-            except Exception:
-                etiqueta = "DOCUMENTO"
+            parametros = parse_qs(urlparse(href).query)
+            doctypename = (parametros.get("doctypename", [""])[0] or "").strip()
+            content_type = (parametros.get("content_type", [""])[0] or "").strip().lower()
 
-            documentos.append((etiqueta or "DOCUMENTO", href))
+            if not doctypename:
+                # Respaldo: si el link no trae doctypename (portal cambió el
+                # formato), se usa el texto visible del bloque.
+                try:
+                    doctypename = bloque.find_element(By.XPATH, ".//span").text.strip()
+                except Exception:
+                    doctypename = "DOCUMENTO"
 
-        etiquetas = [d[0] for d in documentos]
+            extension = EXTENSIONES_POR_CONTENT_TYPE.get(content_type, ".pdf")
+
+            documentos.append({"etiqueta": doctypename or "DOCUMENTO", "extension": extension, "href": href})
+
+        etiquetas = [d["etiqueta"] for d in documentos]
         logger.info(f"   [{ref}] {len(documentos)} documento(s) encontrado(s): {etiquetas}")
         return documentos
 
-    def abrir_visor_y_obtener_url_pdf(self, ref: str, etiqueta: str, visor_href: str) -> str | None:
-        """Abre VisorB.aspx en una nueva pestaña para forzar la generación del PDF."""
+    def abrir_visor_y_obtener_url_archivo(self, ref: str, etiqueta: str, visor_href: str) -> str | None:
+        """Abre VisorB.aspx en una nueva pestaña para forzar la generación del archivo."""
         self.driver.execute_script("window.open(arguments[0], '_visor');", visor_href)
         self.driver.switch_to.window(self.driver.window_handles[-1])
 
@@ -160,32 +211,37 @@ class LaredoExtractor:
                     (By.XPATH, "//a[contains(@class,'btn-info') and .//span[text()='Abrir']]")
                 )
             )
-            url_pdf = btn_abrir.get_attribute("href")
-            logger.info(f"   [{ref}] [{etiqueta}] PDF generado en: {url_pdf}")
-            return url_pdf
+            url_archivo = btn_abrir.get_attribute("href")
+            logger.info(f"   [{ref}] [{etiqueta}] Archivo generado en: {url_archivo}")
+            return url_archivo
 
         except Exception:
+            # VERIFICAR: no se pudo confirmar contra el portal real si XML/TXT/
+            # imágenes usan el mismo botón "Abrir" que PDF en VisorB.
             logger.error(f"   [{ref}] [{etiqueta}] ❌ No se encontró el botón 'Abrir' en VisorB.")
+            self.capturar_diagnostico(f"visor_sin_boton_abrir_{ref}_{re.sub(r'[^A-Za-z0-9]+', '_', etiqueta)}")
             return None
 
         finally:
             self.driver.close()
             self.driver.switch_to.window(self.driver.window_handles[0])
 
-    def descargar_pdf(self, ref: str, meta: dict, etiqueta: str, url_pdf: str) -> bool:
-        """Descarga el PDF con requests y lo guarda ya clasificado."""
-        destino = common.construir_ruta_destino(meta, ref, etiqueta, ".pdf")
+    def descargar_documento(self, ref: str, meta: dict, etiqueta: str, extension: str, url_archivo: str) -> bool:
+        """Descarga el documento (de cualquier tipo) con requests y lo guarda ya clasificado."""
+        destino = common.construir_ruta_destino(meta, ref, etiqueta, extension)
         self.sincronizar_cookies()
 
         try:
-            logger.info(f"   [{ref}] [{etiqueta}] Descargando PDF...")
-            resp = self.session.get(url_pdf, timeout=60, stream=True)
+            logger.info(f"   [{ref}] [{etiqueta}] Descargando ({extension})...")
+            resp = self.session.get(url_archivo, timeout=60, stream=True)
             resp.raise_for_status()
 
-            content_type = resp.headers.get("Content-Type", "")
-            if "pdf" not in content_type and "octet" not in content_type:
+            content_type = resp.headers.get("Content-Type", "").lower()
+            if "text/html" in content_type:
+                # Un archivo real nunca vuelve como text/html; esto sí es
+                # síntoma de sesión expirada / redirección al login.
                 logger.error(
-                    f"   [{ref}] [{etiqueta}] ❌ Respuesta inesperada ({content_type}). "
+                    f"   [{ref}] [{etiqueta}] ❌ Respuesta HTML en vez del archivo. "
                     f"Posible redirección al login — las cookies pueden haber expirado."
                 )
                 return False
@@ -209,13 +265,17 @@ class LaredoExtractor:
                 logger.warning(f"   [{ref}] Sin documentos disponibles. Se omite.")
                 return
 
-            for etiqueta, visor_href in documentos:
+            descargados = 0
+            for doc in documentos:
+                etiqueta  = doc["etiqueta"]
+                extension = doc["extension"]
                 try:
-                    url_pdf = self.abrir_visor_y_obtener_url_pdf(ref, etiqueta, visor_href)
-                    if not url_pdf:
-                        logger.warning(f"   [{ref}] [{etiqueta}] Sin URL de PDF. Se omite.")
+                    url_archivo = self.abrir_visor_y_obtener_url_archivo(ref, etiqueta, doc["href"])
+                    if not url_archivo:
+                        logger.warning(f"   [{ref}] [{etiqueta}] Sin URL de archivo. Se omite.")
                         continue
-                    self.descargar_pdf(ref, meta, etiqueta, url_pdf)
+                    if self.descargar_documento(ref, meta, etiqueta, extension, url_archivo):
+                        descargados += 1
                 except Exception as e:
                     logger.error(f"   [{ref}] [{etiqueta}] ⚠ Error procesando documento: {e}")
                     while len(self.driver.window_handles) > 1:
@@ -223,6 +283,8 @@ class LaredoExtractor:
                         self.driver.close()
                     self.driver.switch_to.window(self.driver.window_handles[0])
                     time.sleep(1)
+
+            logger.info(f"   [{ref}] ✅ {descargados}/{len(documentos)} documento(s) descargado(s).")
 
         except Exception as e:
             logger.error(f"⚠️  Error procesando [{ref}]: {e}")

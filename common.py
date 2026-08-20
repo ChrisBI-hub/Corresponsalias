@@ -115,21 +115,27 @@ def sanear_nombre(texto) -> str:
 def construir_ruta_destino(meta: dict, referencia: str, tag: str, extension: str) -> str:
     """
     Devuelve la ruta final del archivo según la clasificación acordada:
-        Descargas/{RazonSocial}/{Año}/{Aduana}/{Referencia}/{Referencia}_{Pedimento}_{Tag}.ext
-    Crea las carpetas intermedias si no existen. Si el nombre ya existe,
-    agrega un sufijo numérico para no sobrescribir.
+        Descargas/{RazonSocial}/{Año}/{Aduana}/REF-{Referencia} - PEDIMENTO {Pedimento}/{tag}.ext
+
+    Ejemplo:
+        Descargas/SANOFI MEXICO/2026/470 - NUEVO LAREDO/REF-ABC123 - PEDIMENTO 12345678/pedimento_completo.pdf
+
+    Crea las carpetas intermedias si no existen. Si el nombre de archivo ya
+    existe en esa carpeta (p.ej. varias fotos), agrega un sufijo numérico.
     """
-    razon   = sanear_nombre(meta.get("cliente"))
-    anio    = sanear_nombre(meta.get("anio") or "SIN_ANIO")
-    aduana  = sanear_nombre(meta.get("aduana"))
-    carpeta = os.path.join(PATH_DESCARGAS_BASE, razon, anio, aduana, referencia)
+    razon     = sanear_nombre(meta.get("cliente"))
+    anio      = sanear_nombre(meta.get("anio") or "SIN_ANIO")
+    aduana    = sanear_nombre(meta.get("aduana"))
+    pedimento = sanear_nombre(meta.get("pedimento") or "SINPEDIMENTO")
+    carpeta_ref = sanear_nombre(f"REF-{referencia} - PEDIMENTO {pedimento}")
+
+    carpeta = os.path.join(PATH_DESCARGAS_BASE, razon, anio, aduana, carpeta_ref)
     os.makedirs(carpeta, exist_ok=True)
 
-    pedimento  = sanear_nombre(meta.get("pedimento") or "SINPEDIMENTO")
-    tag_limpio = re.sub(r"[^A-Za-z0-9]+", "_", tag or "DOCUMENTO").strip("_") or "DOCUMENTO"
+    tag_limpio = re.sub(r"[^A-Za-z0-9]+", "_", tag or "DOCUMENTO").strip("_").lower() or "documento"
     ext = extension if extension.startswith(".") else f".{extension}"
 
-    destino = os.path.join(carpeta, f"{referencia}_{pedimento}_{tag_limpio}{ext}")
+    destino = os.path.join(carpeta, f"{tag_limpio}{ext}")
 
     base, ext_final = os.path.splitext(destino)
     contador = 1
@@ -199,9 +205,16 @@ def construir_metadata_y_grupos(df: pd.DataFrame):
             continue
 
         cliente = fila.get("Cliente")
+        # Carpeta de aduana con código + nombre (ej. "470 - NUEVO LAREDO"),
+        # tal como lo pidió el usuario. Si [Aduana/Sección Despacho] viene
+        # vacío, se usa [Tipo Sucursal] (LAREDO/MANZANILLO) como respaldo.
+        aduana = fila.get("Aduana/Sección Despacho")
+        if aduana is None or (isinstance(aduana, float) and pd.isna(aduana)) or str(aduana).strip() == "":
+            aduana = fila.get("Tipo Sucursal")
+
         meta = {
             "cliente":   cliente,
-            "aduana":    fila.get("Tipo Sucursal"),
+            "aduana":    aduana,
             "anio":      _extraer_anio(fila.get("Fecha de Pago funcion")),
             "pedimento": fila.get("Pedimento"),
         }
