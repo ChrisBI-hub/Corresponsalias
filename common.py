@@ -185,6 +185,12 @@ def construir_metadata_y_grupos(df: pd.DataFrame):
 
     Solo procesa referencias LT (Laredo) o MN (Manzanillo); el resto
     (AÉREO, MARÍTIMO, CORRESPONSALIAS) no tiene portal que extraer.
+
+    Una fila del SQL puede traer varias referencias combinadas con "/"
+    (ej. "LT2696671/LT2696668"): son referencias independientes que
+    comparten el mismo pedimento/aduana/año consolidado. Aquí se separan
+    y cada una queda como su propia entrada en metadata/grupos, para que
+    laredo.py y manzanillo.py las busquen y descarguen por separado.
     """
     metadata: dict = {}
     grupos_laredo: dict = {}
@@ -194,14 +200,16 @@ def construir_metadata_y_grupos(df: pd.DataFrame):
     df = df.drop_duplicates(subset=["Referencia"])
 
     for _, fila in df.iterrows():
-        ref = str(fila.get("Referencia") or "").strip()
-        if not ref:
+        ref_crudo = str(fila.get("Referencia") or "").strip()
+        if not ref_crudo:
             continue
 
-        ref_upper = ref.upper()
-        es_laredo     = ref_upper.startswith("LT")
-        es_manzanillo = ref_upper.startswith("MN")
-        if not (es_laredo or es_manzanillo):
+        # Una fila del SQL puede traer varias referencias combinadas con
+        # "/" (ej. "LT2696671/LT2696668"): son referencias independientes
+        # que comparten el mismo pedimento/aduana/año consolidado, y cada
+        # una se busca y descarga por separado en el portal.
+        referencias = [r.strip() for r in ref_crudo.split("/") if r.strip()]
+        if not referencias:
             continue
 
         cliente = fila.get("Cliente")
@@ -218,17 +226,25 @@ def construir_metadata_y_grupos(df: pd.DataFrame):
             "anio":      _extraer_anio(fila.get("Fecha de Pago funcion")),
             "pedimento": fila.get("Pedimento"),
         }
-        metadata[ref] = meta
 
-        if es_laredo:
-            clave = clave_credencial(cliente, fila.get("Unidad de negocio"))
-            if clave is None:
-                if cliente == "SANOFI MEXICO S.A. DE C.V.":
-                    faltantes_sm.append(ref)
+        for ref in referencias:
+            ref_upper = ref.upper()
+            es_laredo     = ref_upper.startswith("LT")
+            es_manzanillo = ref_upper.startswith("MN")
+            if not (es_laredo or es_manzanillo):
                 continue
-            grupos_laredo.setdefault(clave, []).append(ref)
-        else:
-            grupos_manzanillo.append(ref)
+
+            metadata[ref] = meta
+
+            if es_laredo:
+                clave = clave_credencial(cliente, fila.get("Unidad de negocio"))
+                if clave is None:
+                    if cliente == "SANOFI MEXICO S.A. DE C.V.":
+                        faltantes_sm.append(ref)
+                    continue
+                grupos_laredo.setdefault(clave, []).append(ref)
+            else:
+                grupos_manzanillo.append(ref)
 
     return metadata, grupos_laredo, grupos_manzanillo, faltantes_sm
 

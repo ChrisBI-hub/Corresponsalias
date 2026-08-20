@@ -143,27 +143,6 @@ class LaredoExtractor:
 
     def obtener_todos_los_documentos(self, ref: str) -> list[dict]:
         """
-        Devuelve una lista de dicts {etiqueta, extension, href} para TODOS
-        los documentos disponibles en la carpeta de la referencia.
-
-        Si la referencia viene compuesta (ej. "LT2696671/LT2696668" — dos
-        referencias combinadas, como puede venir en el SQL) y la búsqueda
-        directa no encuentra nada, se reintenta solo con la primera mitad,
-        que suele ser la referencia "padre" en el portal.
-        """
-        documentos = self._buscar_documentos(ref)
-        if not documentos and "/" in ref:
-            primera_ref = ref.split("/")[0].strip()
-            if primera_ref:
-                logger.warning(
-                    f"   [{ref}] ⚠ Referencia compuesta sin resultados directos; "
-                    f"reintentando solo con '{primera_ref}'."
-                )
-                documentos = self._buscar_documentos(primera_ref)
-        return documentos
-
-    def _buscar_documentos(self, ref: str) -> list[dict]:
-        """
         Navega a la página de resultados de la referencia y devuelve una
         lista de dicts {etiqueta, extension, href} para TODOS los
         documentos disponibles en esa carpeta (PDF, imágenes, XML, TXT).
@@ -171,6 +150,11 @@ class LaredoExtractor:
         El content_type real de cada documento viene en la propia URL de
         VisorB.aspx (parámetro "content_type"), así que se lee de ahí en
         vez de asumir que todo es PDF.
+
+        `ref` siempre llega como una referencia individual: cuando el SQL
+        trae varias combinadas con "/" (ej. "LT2696671/LT2696668"),
+        common.construir_metadata_y_grupos() ya las separó antes de armar
+        los grupos que procesa este script.
         """
         token   = "AutoScriptABC1234"
         url_ref = (
