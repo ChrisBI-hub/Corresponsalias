@@ -252,3 +252,70 @@ def guardar_faltantes_sm(referencias: list) -> None:
         f"⚠️  {len(referencias)} referencia(s) de SANOFI MEXICO sin clave de portal. "
         f"Guardadas en: {RUTA_FALTANTES_SM}"
     )
+
+
+# =============================================================================
+# REPORTE FINAL — qué referencias se descargaron y cuáles no
+# =============================================================================
+
+COLUMNAS_REPORTE = [
+    "Referencia", "RazonSocial", "Portal", "Aduana", "Anio", "Pedimento",
+    "DocumentosEncontrados", "DocumentosDescargados", "Estado", "Detalle",
+]
+
+
+def resultado_faltante_sm(ref: str, metadata: dict) -> dict:
+    """Arma la fila de reporte para una referencia de SANOFI MEXICO sin credenciales."""
+    meta = metadata.get(ref, {})
+    return {
+        "Referencia": ref,
+        "RazonSocial": meta.get("cliente", "SANOFI MEXICO S.A. DE C.V."),
+        "Portal": "LAREDO",
+        "Aduana": meta.get("aduana"),
+        "Anio": meta.get("anio"),
+        "Pedimento": meta.get("pedimento"),
+        "DocumentosEncontrados": 0,
+        "DocumentosDescargados": 0,
+        "Estado": "SIN_CREDENCIALES",
+        "Detalle": "SANOFI MEXICO sin credenciales en el portal Laredo (SLAM.Digital).",
+    }
+
+
+def escribir_reporte_excel(resultados: list) -> str | None:
+    """
+    Genera un Excel con el resultado de cada referencia procesada (Laredo +
+    Manzanillo + SANOFI MEXICO sin credenciales): una hoja "Resumen" con el
+    conteo por portal/estado y una hoja "Detalle" con una fila por
+    referencia (documentos encontrados/descargados, estado, detalle del
+    error si aplica). Devuelve la ruta del archivo generado, o None si no
+    hubo resultados que reportar.
+    """
+    if not resultados:
+        logger.warning("⚠️  No hay resultados que reportar; no se generó el Excel.")
+        return None
+
+    df = pd.DataFrame(resultados, columns=COLUMNAS_REPORTE)
+
+    resumen = (
+        df.groupby(["Portal", "Estado"], dropna=False)
+          .size()
+          .reset_index(name="Cantidad")
+          .sort_values(["Portal", "Estado"])
+    )
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    ruta = os.path.join(PATH_PROYECTO_BASE, f"REPORTE_DESCARGAS_{timestamp}.xlsx")
+
+    with pd.ExcelWriter(ruta, engine="openpyxl") as writer:
+        resumen.to_excel(writer, index=False, sheet_name="Resumen")
+        df.to_excel(writer, index=False, sheet_name="Detalle")
+
+        for nombre_hoja in ("Resumen", "Detalle"):
+            ws = writer.sheets[nombre_hoja]
+            for col in ws.columns:
+                max_len = max(len(str(cell.value or "")) for cell in col)
+                ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 60)
+
+    total_ok = int((df["Estado"] == "OK").sum())
+    logger.info(f"✅ Reporte de descargas generado: {ruta} ({total_ok}/{len(df)} referencia(s) OK)")
+    return ruta

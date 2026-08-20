@@ -36,7 +36,7 @@ import re
 import time
 import logging
 import requests
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -143,6 +143,27 @@ class LaredoExtractor:
 
     def obtener_todos_los_documentos(self, ref: str) -> list[dict]:
         """
+        Devuelve una lista de dicts {etiqueta, extension, href} para TODOS
+        los documentos disponibles en la carpeta de la referencia.
+
+        Si la referencia viene compuesta (ej. "LT2696671/LT2696668" — dos
+        referencias combinadas, como puede venir en el SQL) y la búsqueda
+        directa no encuentra nada, se reintenta solo con la primera mitad,
+        que suele ser la referencia "padre" en el portal.
+        """
+        documentos = self._buscar_documentos(ref)
+        if not documentos and "/" in ref:
+            primera_ref = ref.split("/")[0].strip()
+            if primera_ref:
+                logger.warning(
+                    f"   [{ref}] ⚠ Referencia compuesta sin resultados directos; "
+                    f"reintentando solo con '{primera_ref}'."
+                )
+                documentos = self._buscar_documentos(primera_ref)
+        return documentos
+
+    def _buscar_documentos(self, ref: str) -> list[dict]:
+        """
         Navega a la página de resultados de la referencia y devuelve una
         lista de dicts {etiqueta, extension, href} para TODOS los
         documentos disponibles en esa carpeta (PDF, imágenes, XML, TXT).
@@ -154,7 +175,7 @@ class LaredoExtractor:
         token   = "AutoScriptABC1234"
         url_ref = (
             f"{URL_BASE}/ConsultaRefGrupo.aspx"
-            f"?token={token}&ref={ref}&p={self.perfil}&uid={self.uid}"
+            f"?token={token}&ref={quote(ref, safe='')}&p={self.perfil}&uid={self.uid}"
         )
         logger.info(f"   [{ref}] Cargando página de resultados...")
         self.driver.get(url_ref)
@@ -165,7 +186,7 @@ class LaredoExtractor:
             )
         except Exception:
             logger.warning(f"   [{ref}] ⚠ No se encontraron bloques de documentos en la carpeta.")
-            self.capturar_diagnostico(f"sin_documentos_{ref}")
+            self.capturar_diagnostico(f"sin_documentos_{common.sanear_nombre(ref)}")
             return []
 
         bloques = self.driver.find_elements(By.XPATH, "//div[contains(@class,'G000')]")
@@ -219,7 +240,9 @@ class LaredoExtractor:
             # VERIFICAR: no se pudo confirmar contra el portal real si XML/TXT/
             # imágenes usan el mismo botón "Abrir" que PDF en VisorB.
             logger.error(f"   [{ref}] [{etiqueta}] ❌ No se encontró el botón 'Abrir' en VisorB.")
-            self.capturar_diagnostico(f"visor_sin_boton_abrir_{ref}_{re.sub(r'[^A-Za-z0-9]+', '_', etiqueta)}")
+            nombre_ref = common.sanear_nombre(ref).replace(" ", "_")
+            nombre_etq = re.sub(r'[^A-Za-z0-9]+', '_', etiqueta)
+            self.capturar_diagnostico(f"visor_sin_boton_abrir_{nombre_ref}_{nombre_etq}")
             return None
 
         finally:
@@ -258,12 +281,30 @@ class LaredoExtractor:
             logger.error(f"   [{ref}] [{etiqueta}] ❌ Error al descargar: {e}")
             return False
 
-    def procesar_referencia(self, ref: str, meta: dict):
+    def _resultado_base(self, ref: str, meta: dict) -> dict:
+        return {
+            "Referencia": ref,
+            "RazonSocial": meta.get("cliente"),
+            "Portal": "LAREDO",
+            "Aduana": meta.get("aduana"),
+            "Anio": meta.get("anio"),
+            "Pedimento": meta.get("pedimento"),
+            "DocumentosEncontrados": 0,
+            "DocumentosDescargados": 0,
+            "Estado": "ERROR",
+            "Detalle": "",
+        }
+
+    def procesar_referencia(self, ref: str, meta: dict) -> dict:
+        resultado = self._resultado_base(ref, meta)
         try:
             documentos = self.obtener_todos_los_documentos(ref)
+            resultado["DocumentosEncontrados"] = len(documentos)
             if not documentos:
                 logger.warning(f"   [{ref}] Sin documentos disponibles. Se omite.")
-                return
+                resultado["Estado"] = "SIN_DOCUMENTOS"
+                resultado["Detalle"] = "No se encontraron documentos en el portal para esta referencia."
+                return resultado
 
             descargados = 0
             for doc in documentos:
@@ -284,25 +325,46 @@ class LaredoExtractor:
                     self.driver.switch_to.window(self.driver.window_handles[0])
                     time.sleep(1)
 
+            resultado["DocumentosDescargados"] = descargados
+            if descargados == len(documentos):
+                resultado["Estado"] = "OK"
+            elif descargados > 0:
+                resultado["Estado"] = "PARCIAL"
+                resultado["Detalle"] = f"{descargados}/{len(documentos)} documentos descargados."
+            else:
+                resultado["Estado"] = "ERROR"
+                resultado["Detalle"] = "Se encontraron documentos pero ninguno se pudo descargar."
+
             logger.info(f"   [{ref}] ✅ {descargados}/{len(documentos)} documento(s) descargado(s).")
+            return resultado
 
         except Exception as e:
             logger.error(f"⚠️  Error procesando [{ref}]: {e}")
+            resultado["Detalle"] = str(e)
             while len(self.driver.window_handles) > 1:
                 self.driver.switch_to.window(self.driver.window_handles[-1])
                 self.driver.close()
             self.driver.switch_to.window(self.driver.window_handles[0])
             time.sleep(2)
+            return resultado
 
     # -------------------------------------------------------------------------
     # EJECUCIÓN MAESTRA
     # -------------------------------------------------------------------------
 
-    def procesar_razon_social(self, razon: str, referencias: list[str], metadata: dict):
+    def procesar_razon_social(self, razon: str, referencias: list[str], metadata: dict) -> list[dict]:
+        resultados = []
         credenciales = common.CREDENCIALES_LAREDO.get(razon)
         if not credenciales or not credenciales.get("usuario") or not credenciales.get("contra"):
             logger.error(f"❌ Razón social '{razon}' sin credenciales configuradas (revisa .env). Se omite.")
-            return
+            for ref in referencias:
+                meta = metadata.get(ref, {})
+                r = self._resultado_base(ref, meta)
+                r["RazonSocial"] = meta.get("cliente", razon)
+                r["Estado"] = "SIN_CREDENCIALES"
+                r["Detalle"] = f"Sin credenciales configuradas para '{razon}' (revisa .env)."
+                resultados.append(r)
+            return resultados
 
         self.configurar_driver()
         try:
@@ -314,11 +376,15 @@ class LaredoExtractor:
                 meta = metadata.get(ref)
                 if not meta:
                     logger.warning(f"   [{ref}] ⚠ Sin metadata (no viene de la consulta SQL). Se omite.")
+                    r = self._resultado_base(ref, {})
+                    r["Estado"] = "SIN_METADATA"
+                    r["Detalle"] = "La referencia no viene en la consulta SQL."
+                    resultados.append(r)
                     continue
                 logger.info(f"\n{'='*55}")
                 logger.info(f"  [{razon}] [{i}/{total}]  {ref}")
                 logger.info(f"{'='*55}")
-                self.procesar_referencia(ref, meta)
+                resultados.append(self.procesar_referencia(ref, meta))
 
             logger.info(f"\n🎉 [{razon}] Todas sus referencias procesadas.")
 
@@ -328,21 +394,26 @@ class LaredoExtractor:
                 self.driver = None
                 logger.info(f"🏁 [{razon}] Firefox cerrado.")
 
-    def procesar(self, grupos: dict, metadata: dict):
+        return resultados
+
+    def procesar(self, grupos: dict, metadata: dict) -> list[dict]:
         """
         Punto de entrada usado por main.py.
         grupos = {clave_credencial: [Referencia, ...]}
+        Devuelve la lista de resultados (uno por referencia) para el reporte.
         """
+        resultados = []
         if not grupos:
             logger.info("No hay referencias de Laredo para procesar.")
-            return
+            return resultados
 
         for razon, referencias in grupos.items():
             if not referencias:
                 continue
-            self.procesar_razon_social(razon, referencias, metadata)
+            resultados.extend(self.procesar_razon_social(razon, referencias, metadata))
 
         logger.info("\n🎉 Todas las razones sociales (Laredo) procesadas.")
+        return resultados
 
 
 # =============================================================================
@@ -351,4 +422,5 @@ if __name__ == "__main__":
     df = common.ejecutar_query_v6()
     metadata, grupos_laredo, _, faltantes_sm = common.construir_metadata_y_grupos(df)
     common.guardar_faltantes_sm(faltantes_sm)
-    LaredoExtractor().procesar(grupos_laredo, metadata)
+    resultados = LaredoExtractor().procesar(grupos_laredo, metadata)
+    common.escribir_reporte_excel(resultados)

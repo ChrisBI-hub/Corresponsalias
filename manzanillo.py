@@ -291,19 +291,20 @@ class ManzanilloExtractor:
         logger.info(f"   [{referencia}] ✅ {descargados}/{total_filas} archivo(s) de '{etiqueta}' descargado(s).")
         return descargados
 
-    def descargar_gastos_comprobados(self, referencia: str, meta: dict):
+    def descargar_gastos_comprobados(self, referencia: str, meta: dict) -> int:
         try:
             btn_gastos = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'GASTOS COMPROBADOS')]")))
             self.driver.execute_script("arguments[0].click();", btn_gastos)
             time.sleep(2)
         except Exception:
             logger.info(f"   [{referencia}] — Sin 'GASTOS COMPROBADOS'.")
-            return
+            return 0
 
         filas_gastos = self.driver.find_elements(
             By.XPATH,
             "//table[@id='lstDocumentosGastos']/tbody/tr[@role='row' and not(contains(@class,'jqgfirstrow'))]"
         )
+        descargados = 0
         for fila in filas_gastos:
             try:
                 btn_desc = fila.find_element(By.XPATH, ".//td[@aria-describedby='lstDocumentosGastos_act']//img")
@@ -313,27 +314,67 @@ class ManzanilloExtractor:
                 if ruta_temp:
                     destino = self.mover_a_clasificacion(ruta_temp, meta, referencia, "GASTOS")
                     logger.info(f"   [{referencia}] ✅ Guardado: {destino}")
+                    descargados += 1
                 else:
                     logger.warning(f"   [{referencia}] ⚠ No se detectó descarga de un gasto comprobado.")
             except Exception as e:
                 logger.error(f"   [{referencia}] ❌ Error descargando gasto comprobado: {e}")
 
+        return descargados
+
     # -------------------------------------------------------------------------
     # DESCARGA POR REFERENCIA (Gastos + las 4 clasificaciones)
     # -------------------------------------------------------------------------
 
-    def descargar_expedientes(self, referencias: list[str], metadata: dict):
+    def _resultado_base(self, ref: str, meta: dict) -> dict:
+        return {
+            "Referencia": ref,
+            "RazonSocial": meta.get("cliente"),
+            "Portal": "MANZANILLO",
+            "Aduana": meta.get("aduana"),
+            "Anio": meta.get("anio"),
+            "Pedimento": meta.get("pedimento"),
+            "DocumentosEncontrados": 0,
+            "DocumentosDescargados": 0,
+            "Estado": "ERROR",
+            "Detalle": "",
+        }
+
+    def cerrar_panel_documentos(self, ref: str):
+        """
+        Cierra el panel de documentos de la referencia actual. No es crítico:
+        si falla (ej. ElementClickIntercepted por un overlay que tarda en
+        desaparecer), no debe tumbar el resultado de la referencia — las
+        descargas ya se hicieron antes de este paso.
+        """
+        try:
+            self.driver.find_element(By.XPATH, "//span[contains(@class, 'ui-icon-closethick')]").click()
+            time.sleep(1)
+        except Exception as e:
+            logger.warning(f"   [{ref}] ⚠ No se pudo cerrar el panel de documentos (no crítico): {e}")
+
+    def descargar_expedientes(self, referencias: list[str], metadata: dict) -> list[dict]:
+        resultados = []
         for ref in referencias:
             meta = metadata.get(ref)
             if not meta:
                 logger.warning(f"   [{ref}] ⚠ Sin metadata (no viene de la consulta SQL). Se omite.")
+                r = self._resultado_base(ref, {})
+                r["Estado"] = "SIN_METADATA"
+                r["Detalle"] = "La referencia no viene en la consulta SQL."
+                resultados.append(r)
                 continue
 
+            resultado = self._resultado_base(ref, meta)
+            nombre_ref = common.sanear_nombre(ref).replace(" ", "_")
             logger.info(f"📦 Procesando Referencia: {ref}")
             try:
                 if not self.buscar_referencia_rapida(ref):
                     logger.warning(f"   [{ref}] ⚠ Sin resultados en la búsqueda rápida. Se omite.")
-                    self.capturar_diagnostico(f"sin_resultado_{ref}")
+                    self.capturar_diagnostico(f"sin_resultado_{nombre_ref}")
+                    resultado["Estado"] = "SIN_DOCUMENTOS"
+                    resultado["Detalle"] = "Sin resultados en la búsqueda rápida del portal."
+                    resultados.append(resultado)
                     continue
 
                 btn_mostrar = self.driver.find_element(By.XPATH, "//img[@title='Mostrar documentos']")
@@ -341,43 +382,65 @@ class ManzanilloExtractor:
                 self.esperar_bloqueo()
                 time.sleep(1)
 
-                self.descargar_gastos_comprobados(ref, meta)
-
+                # El id de expediente se lee ANTES de tocar Gastos Comprobados:
+                # se sospecha que el árbol de clasificación deja de ser
+                # accesible en el DOM una vez que se hace clic en Gastos.
                 id_expediente = self.obtener_id_expediente()
+
+                descargados_gastos = self.descargar_gastos_comprobados(ref, meta)
+
+                descargados_clasif = 0
                 if not id_expediente:
                     logger.warning(
                         f"   [{ref}] ⚠ No se pudo determinar el id de expediente; "
                         f"se omiten CASAWIN/EXPEDIENTES/Proforma/DODA."
                     )
+                    self.capturar_diagnostico(f"sin_id_expediente_{nombre_ref}")
+                    resultado["Detalle"] = "No se pudo determinar el id de expediente (CASAWIN/EXPEDIENTES/Proforma/DODA omitidos)."
                 else:
                     for prefijo, sufijo, etiqueta, tag in CLASIFICACIONES_DOCUMENTOS:
                         codigo = f"{prefijo}|{id_expediente}|{sufijo}"
-                        self.descargar_por_clasificacion(ref, meta, codigo, etiqueta, tag)
+                        descargados_clasif += self.descargar_por_clasificacion(ref, meta, codigo, etiqueta, tag)
 
-                self.driver.find_element(By.XPATH, "//span[contains(@class, 'ui-icon-closethick')]").click()
-                time.sleep(1)
+                total_descargados = descargados_gastos + descargados_clasif
+                resultado["DocumentosDescargados"] = total_descargados
+                resultado["DocumentosEncontrados"] = total_descargados
+                if total_descargados > 0 and id_expediente:
+                    resultado["Estado"] = "OK"
+                elif total_descargados > 0:
+                    resultado["Estado"] = "PARCIAL"
+                    resultado["Detalle"] = (resultado["Detalle"] + " Solo se descargó Gastos Comprobados.").strip()
+                else:
+                    resultado["Estado"] = "SIN_DOCUMENTOS"
+
+                self.cerrar_panel_documentos(ref)
 
             except Exception as e:
                 logger.error(f"❌ Error en {ref}: {e}")
-                self.capturar_diagnostico(f"error_referencia_{ref}")
+                resultado["Detalle"] = (resultado["Detalle"] + f" Error: {e}").strip()
+                self.capturar_diagnostico(f"error_referencia_{nombre_ref}")
                 try:
                     self.driver.execute_script("document.querySelector('.ui-icon-closethick').click();")
                 except Exception:
                     pass
 
+            resultados.append(resultado)
+
+        return resultados
+
     # -------------------------------------------------------------------------
     # PUNTO DE ENTRADA
     # -------------------------------------------------------------------------
 
-    def procesar(self, referencias: list[str], metadata: dict):
-        """Punto de entrada usado por main.py."""
+    def procesar(self, referencias: list[str], metadata: dict) -> list[dict]:
+        """Punto de entrada usado por main.py. Devuelve resultados por referencia."""
         if not referencias:
             logger.info("No hay referencias de Manzanillo para procesar.")
-            return
+            return []
         try:
             self.configurar_driver()
             self.ejecutar_login()
-            self.descargar_expedientes(referencias, metadata)
+            return self.descargar_expedientes(referencias, metadata)
         finally:
             if self.driver is not None:
                 self.driver.quit()
@@ -390,4 +453,5 @@ if __name__ == "__main__":
     # Ejecución independiente (sin main.py): arma su propia metadata desde SQL.
     df = common.ejecutar_query_v6()
     metadata, _, grupos_manzanillo, _ = common.construir_metadata_y_grupos(df)
-    ManzanilloExtractor(headless=False).procesar(grupos_manzanillo, metadata)
+    resultados = ManzanilloExtractor(headless=False).procesar(grupos_manzanillo, metadata)
+    common.escribir_reporte_excel(resultados)

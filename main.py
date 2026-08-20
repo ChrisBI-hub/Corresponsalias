@@ -18,7 +18,9 @@ Flujo:
   5. Ejecuta laredo.py (una corrida por cada razón social/credencial) y
      manzanillo.py (cuenta única) — cada uno guarda sus archivos ya
      clasificados en:
-         Descargas/{RazonSocial}/{Año}/{Aduana}/{Referencia}/{Referencia}_{Pedimento}_{Tag}.ext
+         Descargas/{RazonSocial}/{Año}/{Aduana}/REF-{Referencia} - PEDIMENTO {Pedimento}/{tipo_documento}.ext
+  6. Al final escribe REPORTE_DESCARGAS_{fecha_hora}.xlsx con qué
+     referencias se descargaron correctamente y cuáles no (y por qué).
 """
 
 import logging
@@ -47,21 +49,28 @@ def main():
     if faltantes_sm:
         common.guardar_faltantes_sm(faltantes_sm)
 
+    resultados_laredo = []
+    resultados_manzanillo = []
+
     if grupos_laredo:
         logger.info("\n🚚 Iniciando descarga — LAREDO")
-        LaredoExtractor().procesar(grupos_laredo, metadata)
+        resultados_laredo = LaredoExtractor().procesar(grupos_laredo, metadata)
     else:
         logger.info("Sin referencias de Laredo este periodo.")
 
     if grupos_manzanillo:
         logger.info("\n🚢 Iniciando descarga — MANZANILLO")
-        ManzanilloExtractor(headless=False).procesar(grupos_manzanillo, metadata)
+        resultados_manzanillo = ManzanilloExtractor(headless=False).procesar(grupos_manzanillo, metadata)
     else:
         logger.info("Sin referencias de Manzanillo este periodo.")
 
+    resultados_faltantes_sm = [common.resultado_faltante_sm(ref, metadata) for ref in faltantes_sm]
+    todos_resultados = resultados_laredo + resultados_manzanillo + resultados_faltantes_sm
+    common.escribir_reporte_excel(todos_resultados)
+
     logger.info(
-        "\n🎉 Proceso completo. Revisa la carpeta Descargas/ y "
-        "faltantes_sanofi_mexico.txt (si se generó)."
+        "\n🎉 Proceso completo. Revisa la carpeta Descargas/, el reporte "
+        "REPORTE_DESCARGAS_*.xlsx y faltantes_sanofi_mexico.txt (si se generó)."
     )
 
 
