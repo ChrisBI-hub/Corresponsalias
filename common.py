@@ -37,12 +37,29 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 PATH_PROYECTO_BASE  = os.getenv("PROYECTO_BASE", "/home/christian/Documentos/Corresponsalias")
-PATH_DESCARGAS_BASE = os.path.join(PATH_PROYECTO_BASE, "Descargas")
+
+# La carpeta final de Descargas puede vivir en un recurso de red (ej. el
+# share \\10.10.10.97\corresponsal_Efile montado localmente vía CIFS/SMB).
+# Se separa de PROYECTO_BASE a propósito: _tmp_descargas y _debug se quedan
+# en disco local (Firefox y el chequeo de descargas hacen polling cada
+# 0.5-0.8s ahí, y eso sería lento/pesado sobre un montaje de red).
+# Si RUTA_DESCARGAS no está en el .env, se usa PROYECTO_BASE/Descargas
+# como antes (comportamiento local, sin red).
+PATH_DESCARGAS_BASE = os.getenv("RUTA_DESCARGAS", os.path.join(PATH_PROYECTO_BASE, "Descargas"))
+
 PATH_TEMP_DESCARGAS = os.path.join(PATH_PROYECTO_BASE, "_tmp_descargas")  # carpeta de descarga de Firefox
 RUTA_FALTANTES_SM   = os.path.join(PATH_PROYECTO_BASE, "faltantes_sanofi_mexico.txt")
 RUTA_SQL            = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Sanofi_V6.sql")
 
-os.makedirs(PATH_DESCARGAS_BASE, exist_ok=True)
+try:
+    os.makedirs(PATH_DESCARGAS_BASE, exist_ok=True)
+except OSError as e:
+    raise RuntimeError(
+        f"No se pudo crear/acceder a la carpeta de Descargas ({PATH_DESCARGAS_BASE}). "
+        f"Si RUTA_DESCARGAS apunta a un recurso de red (ej. el share montado por CIFS/SMB), "
+        f"confirma que esté montado antes de correr el script. Error original: {e}"
+    ) from e
+
 os.makedirs(PATH_TEMP_DESCARGAS, exist_ok=True)
 
 # =============================================================================

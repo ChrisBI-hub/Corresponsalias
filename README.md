@@ -50,6 +50,47 @@ en el portal Laredo no se descargan; se registran en
    credenciales de cada portal). El `.env` nunca se sube a git.
 4. `python main.py`
 
+## Descargas en el recurso de red (`\\10.10.10.97\corresponsal_Efile`)
+
+Los archivos finales se pueden guardar directo en ese recurso compartido
+de Windows en vez de en disco local. Desde Linux esa misma ruta se monta
+por CIFS/SMB (nunca se escribe la contraseña en la línea de comandos ni
+en un archivo que se suba a git — va en un archivo de credenciales local
+con permisos 600):
+
+```bash
+sudo apt install cifs-utils
+
+# Archivo de credenciales (NO se sube a git — está en .gitignore):
+cat > ~/.smbcredentials-corresponsal <<'EOF'
+username=christian.carbajal.bi
+password=<LA_CONTRASEÑA_REAL>
+EOF
+chmod 600 ~/.smbcredentials-corresponsal
+
+sudo mkdir -p /mnt/corresponsal_efile
+sudo mount -t cifs //10.10.10.97/corresponsal_Efile /mnt/corresponsal_efile \
+    -o credentials=/home/christian/.smbcredentials-corresponsal,uid=$(id -u),gid=$(id -g),iocharset=utf8
+```
+
+Para que quede montado automáticamente al reiniciar, agrega esta línea a
+`/etc/fstab` (ajusta la ruta del archivo de credenciales si tu usuario no
+es `christian`):
+
+```
+//10.10.10.97/corresponsal_Efile /mnt/corresponsal_efile cifs credentials=/home/christian/.smbcredentials-corresponsal,uid=1000,gid=1000,iocharset=utf8,x-systemd.automount,_netdev 0 0
+```
+
+Y en `.env`, apunta `RUTA_DESCARGAS` al punto de montaje:
+
+```
+RUTA_DESCARGAS=/mnt/corresponsal_efile
+```
+
+Si el share no está montado cuando corres `main.py`, el script se detiene
+de inmediato con un error claro (en vez de fallar a medias durante la
+descarga) — monta el recurso antes de ejecutar.
+
 ## Sobre `_tmp_descargas`
 
 Es una carpeta de **paso intermedio**, solo la usa `manzanillo.py`: Firefox
