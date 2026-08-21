@@ -1,5 +1,5 @@
 /* QUERY TIEMPOS DE OPERACIÓN SANOFI SIN FINES DE SEMANA CON CLASIFICACIÓN PRODUCTIVO/NO PRODUCTIVO */
-/* Ultima modificacion: [14/05/2026] */
+/* Ultima modificacion: [21/08/2026] */
 /* Incluye clasificación de mercancías - CORREGIDO COLLATION */
 
 WITH ClasificacionMercancias AS (
@@ -96,7 +96,7 @@ ConsultaBase AS (
         [Guia House],
         [Tipo Operación Desc],
         COALESCE(MERC.MercanciaFinal, main.Mercancía) AS Mercancía,
-        [Tipo Mercancía] AS "TIPO DE MERCANCIA",
+        [Tipo Mercancía] AS "Tipo de mercancía",
         Cliente,
         [EJE UNIDAD DE NEGOCIO] AS "Unidad de negocio",
         CASE
@@ -109,25 +109,8 @@ ConsultaBase AS (
         RFC_Importador,
         OtrosIncPed,
         Nico,
-        Mercancia_CovesSubModelo,
-        [Días Credito],
-        [Valor Moneda Factura ],
-        [UMT DESCRIPCION],
-        [Recti A Cargo De],
-        [Motivo de Rectificación],
-        [Nombre País Origen/Destino],
-        [Nombre País Vendedor/Comprador],
-        [Clave de País Origen/Destino],
-        [Clave de País Vendedor/Comprador],
-        [UNIDAD RENTADA],
-        [PLACAS RENTADA],
-        [UNIDAD SUPER EXPRESS],
-        [PLACAS SUPER EXPRESS],
-        [EMBARQUE REFRIGERADO],
-        [MedioArribo],
-        [Medio],
-        [MedioTransporte],
-        [Rectificación Realizada Por]
+        Mercancia_CovesSubModelo
+
 
     FROM [SIR].[Admin].[SIR_VT_Sabana_Pedimento_ABC] main
     LEFT JOIN RefEntradaPorPedimento AS REF_E
@@ -172,5 +155,5 @@ WHERE --"CLASIFICACIÓN DE MERCANCIA" IN ('PRODUCTIVO') --('PRODUCTIVO','SIN CLA
              TRY_CONVERT(DATE, [Fecha de Pago funcion], 103) >= '2026-01-01'
              AND TRY_CONVERT(DATE, [Fecha de Pago funcion], 103) <= '2026-08-15')
 --[MOTIVO DE RETRASO COMPLETO] not like 'NULL'
-
+and [Sucursal] LIKE 'CORRESPONSALIAS'
 ORDER BY [MES]
