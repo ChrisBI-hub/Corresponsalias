@@ -153,14 +153,37 @@ class ManzanilloExtractor:
         documenta el flujo real de Oñate. Devuelve True si la búsqueda
         encontró resultados (aparece el ícono "Mostrar documentos").
         """
+        # El panel de la referencia anterior puede tardar en cerrarse del
+        # todo (cerrar_panel_documentos es "best effort"); esperar aquí
+        # reduce el riesgo de que el campo no sea interactuable todavía.
+        self.esperar_bloqueo()
+
         try:
-            campo = self.wait.until(EC.presence_of_element_located((By.ID, "txtValorRapido")))
+            campo = self.wait.until(EC.element_to_be_clickable((By.ID, "txtValorRapido")))
         except Exception:
             self.capturar_diagnostico("sin_txtValorRapido")
             raise
 
-        campo.clear()
-        campo.send_keys(referencia)
+        try:
+            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", campo)
+            campo.clear()
+            campo.send_keys(referencia)
+        except Exception:
+            # Respaldo: si el campo sigue sin ser interactuable de forma
+            # normal (ej. un overlay residual de la referencia anterior),
+            # se fuerza el valor por JS disparando los eventos que el
+            # portal espera, en vez de tronar la referencia completa.
+            logger.warning(
+                f"   [{referencia}] ⚠ Campo de búsqueda no interactuable directamente; "
+                f"se usa JS de respaldo."
+            )
+            self.driver.execute_script(
+                "arguments[0].value = arguments[1];"
+                "arguments[0].dispatchEvent(new Event('input', {bubbles: true}));"
+                "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));",
+                campo, referencia
+            )
+
         self.driver.execute_script("ObtenerConsultaRapida();")
         self.esperar_bloqueo()
         time.sleep(2)

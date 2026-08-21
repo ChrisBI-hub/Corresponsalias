@@ -45,7 +45,8 @@ PATH_PROYECTO_BASE  = os.getenv("PROYECTO_BASE", "/home/christian/Documentos/Cor
 # 0.5-0.8s ahí, y eso sería lento/pesado sobre un montaje de red).
 # Si RUTA_DESCARGAS no está en el .env, se usa PROYECTO_BASE/Descargas
 # como antes (comportamiento local, sin red).
-PATH_DESCARGAS_BASE = os.getenv("RUTA_DESCARGAS", os.path.join(PATH_PROYECTO_BASE, "Descargas"))
+_RUTA_DESCARGAS_ENV = os.getenv("RUTA_DESCARGAS")
+PATH_DESCARGAS_BASE = _RUTA_DESCARGAS_ENV or os.path.join(PATH_PROYECTO_BASE, "Descargas")
 
 PATH_TEMP_DESCARGAS = os.path.join(PATH_PROYECTO_BASE, "_tmp_descargas")  # carpeta de descarga de Firefox
 RUTA_FALTANTES_SM   = os.path.join(PATH_PROYECTO_BASE, "faltantes_sanofi_mexico.txt")
@@ -59,6 +60,18 @@ except OSError as e:
         f"Si RUTA_DESCARGAS apunta a un recurso de red (ej. el share montado por CIFS/SMB), "
         f"confirma que esté montado antes de correr el script. Error original: {e}"
     ) from e
+
+if _RUTA_DESCARGAS_ENV and not os.path.ismount(PATH_DESCARGAS_BASE):
+    # RUTA_DESCARGAS es una carpeta local normal (no un mount activo): si
+    # el share de red se desmontó o nunca se montó, esta carpeta existe
+    # igual de forma local y el script guardaría todo ahí en silencio, sin
+    # avisar y sin que llegue al servidor. Se detiene antes de que pase eso.
+    raise RuntimeError(
+        f"RUTA_DESCARGAS={PATH_DESCARGAS_BASE} no es un punto de montaje activo ahora mismo. "
+        f"El recurso de red no está montado (o se desmontó) — monta el share antes de correr "
+        f"main.py, o los archivos se guardarían en disco local sin avisar. "
+        f"Ver README, sección 'Descargas en el recurso de red'."
+    )
 
 os.makedirs(PATH_TEMP_DESCARGAS, exist_ok=True)
 
