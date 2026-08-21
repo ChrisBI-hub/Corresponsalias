@@ -134,11 +134,16 @@ CLIENTE_A_CLAVE = {
 }
 
 
-def clave_credencial(cliente: str, unidad_negocio: str) -> str | None:
-    """Resuelve la clave de credencial Laredo para un Cliente de la consulta."""
+def clave_credencial(cliente: str) -> str | None:
+    """
+    Resuelve la clave de credencial Laredo para un Cliente de la consulta.
+    Cualquier Cliente que contenga "AVENTIS" usa la credencial AVENTIS, sin
+    distinción de unidad de negocio (antes se exigía GENMED, tal como
+    reflejaba el WHERE del SQL; se quitó esa restricción en ambos lados).
+    """
     if cliente in CLIENTE_A_CLAVE:
         return CLIENTE_A_CLAVE[cliente]
-    if cliente and "AVENTIS" in cliente.upper() and (unidad_negocio or "").upper().startswith("GENMED"):
+    if cliente and "AVENTIS" in cliente.upper():
         return "AVENTIS"
     return None
 
@@ -288,7 +293,7 @@ def construir_metadata_y_grupos(df: pd.DataFrame):
             metadata[ref] = meta
 
             if es_laredo:
-                clave = clave_credencial(cliente, fila.get("Unidad de negocio"))
+                clave = clave_credencial(cliente)
                 if clave is None:
                     if cliente == "SANOFI MEXICO S.A. DE C.V.":
                         faltantes_sm.append(ref)

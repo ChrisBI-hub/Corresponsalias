@@ -142,7 +142,7 @@ ConsultaBase AS (
     WHERE
         --(Cliente like '%AVENTIS%')
         (Cliente IN ('SANOFI PASTEUR, S.A DE C.V.','AZTECA VACUNAS, SA DE CV','SANOFI MEXICO S.A. DE C.V.')
-        OR (Cliente LIKE '%AVENTIS%' AND [EJE UNIDAD DE NEGOCIO] LIKE'GENMED%'))
+        OR (Cliente LIKE '%AVENTIS%'))
         --AND [Tipo Operación Desc] = 'Importación'
         --and [Clave Pedimento] not like 'R%'
 )
