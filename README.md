@@ -89,7 +89,17 @@ RUTA_DESCARGAS=/mnt/corresponsal
 
 Si el share no está montado cuando corres `main.py`, el script se detiene
 de inmediato con un error claro (en vez de fallar a medias durante la
-descarga) — monta el recurso antes de ejecutar.
+descarga) — monta el recurso antes de ejecutar. También se valida que se
+pueda **escribir** ahí: un mount hecho con `sudo` sin `uid=`/`gid=`/
+`file_mode=`/`dir_mode=` deja los archivos con permisos que solo root
+puede escribir, aunque el mount esté activo. Si tu usuario normal no es
+quien puede escribir, vuelve a montar así:
+
+```bash
+sudo umount /mnt/corresponsal
+sudo mount -t cifs //10.10.10.97/corresponsal_Efile /mnt/corresponsal \
+    -o credentials=/home/christian/.smbcredentials,vers=3.0,uid=$(id -u),gid=$(id -g),file_mode=0777,dir_mode=0777
+```
 
 ## Sobre `_tmp_descargas`
 
@@ -102,7 +112,8 @@ queda ahí es porque el movimiento a la carpeta final falló (timeout o
 error) — al inicio de cada corrida el script avisa si hay sobrantes de una
 corrida anterior, para que se revisen y clasifiquen a mano si hace falta.
 `laredo.py` no la usa para guardar nada: descarga directo a su carpeta
-final vía `requests`.
+final vía `requests` (su Firefox ya no tiene configurada ninguna
+descarga silenciosa).
 
 ## Notas
 

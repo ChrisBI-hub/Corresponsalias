@@ -78,15 +78,15 @@ class LaredoExtractor:
     # -------------------------------------------------------------------------
 
     def configurar_driver(self):
+        # Este Firefox nunca necesita descargar nada por sí mismo: el
+        # archivo real se obtiene con requests (ver descargar_documento).
+        # Antes se configuraba browser.download.dir + pdfjs.disabled + una
+        # lista neverAsk.saveToDisk que incluía "application/pdf" — eso
+        # hacía que Firefox guardara en silencio, en _tmp_descargas, una
+        # copia de cada PDF que VisorB.aspx mostraba en la pestaña
+        # (efecto secundario no deseado: ese archivo nunca se usaba ni se
+        # limpiaba). Se quita esa configuración por completo.
         options = webdriver.FirefoxOptions()
-        options.set_preference("browser.download.folderList", 2)
-        options.set_preference("browser.download.dir", common.PATH_TEMP_DESCARGAS)
-        options.set_preference(
-            "browser.helperApps.neverAsk.saveToDisk",
-            "application/pdf,application/zip,application/octet-stream"
-        )
-        options.set_preference("pdfjs.disabled", True)
-        options.set_preference("browser.download.manager.showWhenStarting", False)
         self.driver = webdriver.Firefox(options=options)
         self.wait   = WebDriverWait(self.driver, 35)
         logger.info("🦊 Firefox iniciado.")

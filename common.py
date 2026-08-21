@@ -73,6 +73,27 @@ if _RUTA_DESCARGAS_ENV and not os.path.ismount(PATH_DESCARGAS_BASE):
         f"Ver README, sección 'Descargas en el recurso de red'."
     )
 
+if _RUTA_DESCARGAS_ENV:
+    # El mount puede estar activo pero sin permiso de escritura para el
+    # usuario que corre main.py (típico si el mount CIFS se hizo con sudo
+    # sin uid=/gid=/file_mode=/dir_mode=, dejando todo con permisos que
+    # solo root puede escribir). Se prueba de verdad en vez de asumir.
+    _prueba_escritura = os.path.join(PATH_DESCARGAS_BASE, ".prueba_escritura")
+    try:
+        os.makedirs(_prueba_escritura, exist_ok=True)
+        os.rmdir(_prueba_escritura)
+    except OSError as e:
+        raise RuntimeError(
+            f"RUTA_DESCARGAS={PATH_DESCARGAS_BASE} está montado pero no se puede escribir ahí "
+            f"con tu usuario actual. Si es un mount CIFS, vuelve a montarlo agregando "
+            f"uid=$(id -u),gid=$(id -g),file_mode=0777,dir_mode=0777 a las opciones -o, ej.:\n"
+            f"  sudo umount {PATH_DESCARGAS_BASE}\n"
+            f"  sudo mount -t cifs //10.10.10.97/corresponsal_Efile {PATH_DESCARGAS_BASE} "
+            f"-o credentials=~/.smbcredentials,vers=3.0,uid=$(id -u),gid=$(id -g),"
+            f"file_mode=0777,dir_mode=0777\n"
+            f"Error original: {e}"
+        ) from e
+
 os.makedirs(PATH_TEMP_DESCARGAS, exist_ok=True)
 
 # =============================================================================

@@ -62,10 +62,17 @@ TIMEOUT_DESCARGA = 60
 # (prefijo, sufijo, etiqueta_para_log, tag_para_nombre_de_archivo)
 # El código real que recibe CargarDocumentosPorClasificacion() se arma como
 # f"{prefijo}|{id_expediente}|{sufijo}" con el id extraído en vivo.
+# Confirmado contra el árbol jstree real (#trvDocumentos) de una referencia:
+# EXPEDIENTES (7777|id|0 y 7777|id|10) y, dentro de CONTROL INTERNO, 6
+# sub-clasificaciones — no solo Proforma glosada y DODAs.
 CLASIFICACIONES_DOCUMENTOS = [
     ("7777", "0",  "Expediente aduanal (CASAWIN)",               "CASAWIN"),
     ("7777", "10", "Expediente aduanal (CASAWIN) - Expedientes",  "EXPEDIENTES"),
+    ("4",    "4",  "5. Reporte previo",                           "REPORTE_PREVIO"),
     ("4",    "5",  "7. Proforma glosada",                         "PROFORMA_GLOSADA"),
+    ("4",    "6",  "8. EIR",                                      "EIR"),
+    ("4",    "7",  "9. Corte demoras",                            "CORTE_DEMORAS"),
+    ("4",    "12", "10. MV y HC",                                 "MV_HC"),
     ("4",    "15", "11. DODAs",                                   "DODA"),
 ]
 
@@ -204,8 +211,14 @@ class ManzanilloExtractor:
         CargarDocumentosPorClasificacion) desde cualquier nodo del árbol de
         documentos ya visible para la referencia actual. Este id lo genera
         el portal en automático al abrir la referencia — nunca es fijo.
+
+        CONFIRMADO contra el HTML real del portal: el onclick trae un
+        espacio antes del paréntesis de cierre, ej.
+        onclick="CargarDocumentosPorClasificacion('7777|400127633|0' )"
+        — por eso el regex permite \s* ahí; sin eso nunca hacía match y
+        el id de expediente salía None en el 100% de las referencias.
         """
-        patron = re.compile(r"CargarDocumentosPorClasificacion\('(\d+)\|(\d+)\|(\d+)'\)")
+        patron = re.compile(r"CargarDocumentosPorClasificacion\('(\d+)\|(\d+)\|(\d+)'\s*\)")
         for _ in range(3):
             nodos = self.driver.find_elements(
                 By.XPATH, "//a[contains(@onclick,'CargarDocumentosPorClasificacion')]"
