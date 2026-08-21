@@ -62,29 +62,29 @@ con permisos 600):
 sudo apt install cifs-utils
 
 # Archivo de credenciales (NO se sube a git — está en .gitignore):
-cat > ~/.smbcredentials-corresponsal <<'EOF'
+cat > ~/.smbcredentials <<'EOF'
 username=christian.carbajal.bi
 password=<LA_CONTRASEÑA_REAL>
 EOF
-chmod 600 ~/.smbcredentials-corresponsal
+chmod 600 ~/.smbcredentials
 
-sudo mkdir -p /mnt/corresponsal_efile
-sudo mount -t cifs //10.10.10.97/corresponsal_Efile /mnt/corresponsal_efile \
-    -o credentials=/home/christian/.smbcredentials-corresponsal,uid=$(id -u),gid=$(id -g),iocharset=utf8
+sudo mkdir -p /mnt/corresponsal
+sudo mount -t cifs //10.10.10.97/corresponsal_Efile /mnt/corresponsal \
+    -o credentials=/home/kali/.smbcredentials,vers=3.0
 ```
 
 Para que quede montado automáticamente al reiniciar, agrega esta línea a
-`/etc/fstab` (ajusta la ruta del archivo de credenciales si tu usuario no
-es `christian`):
+`/etc/fstab` (ajusta la ruta del archivo de credenciales y el usuario si
+no es `kali`):
 
 ```
-//10.10.10.97/corresponsal_Efile /mnt/corresponsal_efile cifs credentials=/home/christian/.smbcredentials-corresponsal,uid=1000,gid=1000,iocharset=utf8,x-systemd.automount,_netdev 0 0
+//10.10.10.97/corresponsal_Efile /mnt/corresponsal cifs credentials=/home/kali/.smbcredentials,vers=3.0,x-systemd.automount,_netdev 0 0
 ```
 
 Y en `.env`, apunta `RUTA_DESCARGAS` al punto de montaje:
 
 ```
-RUTA_DESCARGAS=/mnt/corresponsal_efile
+RUTA_DESCARGAS=/mnt/corresponsal
 ```
 
 Si el share no está montado cuando corres `main.py`, el script se detiene
