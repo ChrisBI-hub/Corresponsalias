@@ -50,6 +50,19 @@ en el portal Laredo no se descargan; se registran en
    credenciales de cada portal). El `.env` nunca se sube a git.
 4. `python main.py`
 
+## Sobre `_tmp_descargas`
+
+Es una carpeta de **paso intermedio**, solo la usa `manzanillo.py`: Firefox
+necesita una carpeta de descargas fija antes de que el script sepa a qué
+referencia/clasificación pertenece el archivo, así que descarga ahí
+primero y luego el script lo mueve y renombra a su carpeta final en
+`Descargas/`. En una corrida exitosa debería quedar **vacía**. Si algo se
+queda ahí es porque el movimiento a la carpeta final falló (timeout o
+error) — al inicio de cada corrida el script avisa si hay sobrantes de una
+corrida anterior, para que se revisen y clasifiquen a mano si hace falta.
+`laredo.py` no la usa para guardar nada: descarga directo a su carpeta
+final vía `requests`.
+
 ## Notas
 
 - Los scripts de Manzanillo no se pudieron probar contra el portal real

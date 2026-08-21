@@ -57,7 +57,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 import common
 
-TIMEOUT_DESCARGA = 30
+TIMEOUT_DESCARGA = 60
 
 # (prefijo, sufijo, etiqueta_para_log, tag_para_nombre_de_archivo)
 # El código real que recibe CargarDocumentosPorClasificacion() se arma como
@@ -202,10 +202,34 @@ class ManzanilloExtractor:
     def archivos_en_temp(self):
         return set(os.listdir(common.PATH_TEMP_DESCARGAS))
 
+    def advertir_sobrantes_temp(self):
+        """
+        Revisa _tmp_descargas al iniciar: si ya hay archivos ahí, son
+        sobrantes de una corrida anterior que no se alcanzaron a mover a su
+        carpeta clasificada (por un timeout o un error a medio proceso).
+        No se borran solos —se advierte para que se revisen a mano— porque
+        podrían ser útiles para no perder esa descarga.
+        """
+        try:
+            sobrantes = sorted(os.listdir(common.PATH_TEMP_DESCARGAS))
+        except FileNotFoundError:
+            sobrantes = []
+        if sobrantes:
+            logger.warning(
+                f"⚠️  {len(sobrantes)} archivo(s) sin clasificar en {common.PATH_TEMP_DESCARGAS} "
+                f"(de una corrida anterior que no los pudo mover a tiempo): {sobrantes}"
+            )
+            logger.warning(
+                "    Revísalos a mano: si son descargas válidas, muévelos tú mismo a la "
+                "carpeta de la referencia correspondiente en Descargas/."
+            )
+
     def esperar_descarga_temp(self, archivos_previos, timeout=TIMEOUT_DESCARGA):
         """
         Espera a que aparezca un archivo NUEVO y completo (no .part/.tmp) en
-        la carpeta temporal de descargas del navegador. Devuelve su ruta o None.
+        la carpeta temporal de descargas del navegador. Devuelve su ruta o
+        None si se agota el tiempo (en ese caso el archivo se queda en
+        _tmp_descargas sin clasificar — ver advertir_sobrantes_temp).
         """
         limite = time.time() + timeout
         while time.time() < limite:
@@ -283,7 +307,11 @@ class ManzanilloExtractor:
                     logger.info(f"   [{referencia}] ✅ Guardado: {destino}")
                     descargados += 1
                 else:
-                    logger.warning(f"   [{referencia}] ⚠ Fila {idx+1}/{total_filas} de '{etiqueta}': no se detectó descarga.")
+                    logger.warning(
+                        f"   [{referencia}] ⚠ Fila {idx+1}/{total_filas} de '{etiqueta}': no se detectó "
+                        f"descarga en {TIMEOUT_DESCARGA}s. Si llega tarde, puede aparecer sin clasificar "
+                        f"en {common.PATH_TEMP_DESCARGAS} — revisa ahí."
+                    )
 
             except Exception as e:
                 logger.error(f"   [{referencia}] ❌ Error en fila {idx+1} de '{etiqueta}': {e}")
@@ -316,7 +344,11 @@ class ManzanilloExtractor:
                     logger.info(f"   [{referencia}] ✅ Guardado: {destino}")
                     descargados += 1
                 else:
-                    logger.warning(f"   [{referencia}] ⚠ No se detectó descarga de un gasto comprobado.")
+                    logger.warning(
+                        f"   [{referencia}] ⚠ No se detectó descarga de un gasto comprobado en "
+                        f"{TIMEOUT_DESCARGA}s. Si llega tarde, puede aparecer sin clasificar en "
+                        f"{common.PATH_TEMP_DESCARGAS} — revisa ahí."
+                    )
             except Exception as e:
                 logger.error(f"   [{referencia}] ❌ Error descargando gasto comprobado: {e}")
 
@@ -437,6 +469,7 @@ class ManzanilloExtractor:
         if not referencias:
             logger.info("No hay referencias de Manzanillo para procesar.")
             return []
+        self.advertir_sobrantes_temp()
         try:
             self.configurar_driver()
             self.ejecutar_login()
