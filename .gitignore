@@ -8,3 +8,6 @@ _debug/
 faltantes_sanofi_mexico.txt
 log_referencias_procesadas.json
 *.xlsx
+.venv/
+corresponsal/
+.vscode/

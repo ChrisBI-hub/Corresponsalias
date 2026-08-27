@@ -152,7 +152,7 @@ WHERE --"CLASIFICACIÓN DE MERCANCIA" IN ('PRODUCTIVO') --('PRODUCTIVO','SIN CLA
    --AND
    (
     -- Convertir el campo unificado de vuelta a DATE para la comparación
-             TRY_CONVERT(DATE, [Fecha de Pago funcion], 103) >= '2020-01-01'
+             TRY_CONVERT(DATE, [Fecha de Pago funcion], 103) >= '2012-01-01'
              AND TRY_CONVERT(DATE, [Fecha de Pago funcion], 103) <= '2026-08-15')
 --[MOTIVO DE RETRASO COMPLETO] not like 'NULL'
 and [Sucursal] LIKE 'CORRESPONSALIAS'
