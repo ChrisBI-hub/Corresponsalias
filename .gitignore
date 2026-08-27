@@ -6,4 +6,5 @@ Descargas/
 _tmp_descargas/
 _debug/
 faltantes_sanofi_mexico.txt
+log_referencias_procesadas.json
 *.xlsx

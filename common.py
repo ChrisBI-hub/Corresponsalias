@@ -18,6 +18,7 @@ historial de git.
 
 import os
 import re
+import json
 import logging
 from datetime import datetime
 
@@ -51,6 +52,7 @@ PATH_DESCARGAS_BASE = _RUTA_DESCARGAS_ENV or os.path.join(PATH_PROYECTO_BASE, "D
 PATH_TEMP_DESCARGAS = os.path.join(PATH_PROYECTO_BASE, "_tmp_descargas")  # carpeta de descarga de Firefox
 RUTA_FALTANTES_SM   = os.path.join(PATH_PROYECTO_BASE, "faltantes_sanofi_mexico.txt")
 RUTA_SQL            = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Sanofi_V6.sql")
+RUTA_LOG_PROCESADAS = os.path.join(PATH_PROYECTO_BASE, "log_referencias_procesadas.json")
 
 try:
     os.makedirs(PATH_DESCARGAS_BASE, exist_ok=True)
@@ -391,3 +393,74 @@ def escribir_reporte_excel(resultados: list) -> str | None:
     total_ok = int((df["Estado"] == "OK").sum())
     logger.info(f"✅ Reporte de descargas generado: {ruta} ({total_ok}/{len(df)} referencia(s) OK)")
     return ruta
+
+
+# =============================================================================
+# LOG DE REFERENCIAS YA PROCESADAS — para no volver a descargar en cada corrida
+# =============================================================================
+#
+# Con el rango de fechas de la consulta ahora tan amplio, cada corrida de
+# main.py puede traer miles de referencias que ya se descargaron en una
+# corrida anterior. Este log persiste en disco (JSON, {Referencia: {...}})
+# el último resultado conocido de cada referencia; en la siguiente corrida,
+# cualquier referencia con Estado == "OK" se salta automáticamente. Las que
+# quedaron PARCIAL/ERROR/SIN_DOCUMENTOS/etc. se vuelven a intentar, porque
+# no se sabe si la próxima vez el portal ya tiene los documentos completos.
+#
+# Se actualiza referencia por referencia (no solo al final de la corrida):
+# laredo.py y manzanillo.py aceptan un callback on_resultado(resultado) que
+# main.py usa para ir guardando el log a disco de inmediato, así una corrida
+# larga no pierde el progreso ya hecho si se interrumpe a medias.
+
+ESTADO_CONSIDERADO_COMPLETO = "OK"
+
+
+def cargar_log_procesadas() -> dict:
+    """Devuelve {Referencia: {Estado, Portal, DocumentosDescargados, Fecha}}."""
+    if not os.path.exists(RUTA_LOG_PROCESADAS):
+        return {}
+    try:
+        with open(RUTA_LOG_PROCESADAS, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(
+            f"⚠️  No se pudo leer {RUTA_LOG_PROCESADAS} ({e}); se ignora y se reprocesa todo esta vez."
+        )
+        return {}
+
+
+def guardar_log_procesadas(log: dict) -> None:
+    with open(RUTA_LOG_PROCESADAS, "w", encoding="utf-8") as f:
+        json.dump(log, f, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def registrar_resultado_en_log(log: dict, resultado: dict) -> None:
+    """Actualiza `log` en memoria y lo persiste a disco de inmediato (una referencia a la vez)."""
+    ref = resultado.get("Referencia")
+    if not ref:
+        return
+    log[ref] = {
+        "Estado": resultado.get("Estado"),
+        "Portal": resultado.get("Portal"),
+        "DocumentosDescargados": resultado.get("DocumentosDescargados"),
+        "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    guardar_log_procesadas(log)
+
+
+def filtrar_ya_completadas(referencias: list, log: dict) -> tuple[list, int]:
+    """Quita de `referencias` las que ya están en el log con Estado == OK."""
+    pendientes = [r for r in referencias if log.get(r, {}).get("Estado") != ESTADO_CONSIDERADO_COMPLETO]
+    return pendientes, len(referencias) - len(pendientes)
+
+
+def filtrar_grupos_laredo_completados(grupos: dict, log: dict) -> tuple[dict, int]:
+    """Igual que filtrar_ya_completadas pero para {clave_credencial: [Referencia, ...]}."""
+    filtrados = {}
+    total_saltadas = 0
+    for clave, referencias in grupos.items():
+        pendientes, saltadas = filtrar_ya_completadas(referencias, log)
+        total_saltadas += saltadas
+        if pendientes:
+            filtrados[clave] = pendientes
+    return filtrados, total_saltadas

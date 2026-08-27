@@ -42,6 +42,19 @@ Las referencias de **SANOFI MEXICO S.A. DE C.V.** que no tengan credenciales
 en el portal Laredo no se descargan; se registran en
 `faltantes_sanofi_mexico.txt` con el formato `<Referencia>-SM`.
 
+## Corridas repetidas — no vuelve a descargar lo ya descargado
+
+Cada referencia procesada queda registrada en `log_referencias_procesadas.json`
+(en `PROYECTO_BASE`, no se sube a git). Al iniciar, `main.py` salta cualquier
+referencia que ya haya quedado con `Estado: "OK"` en una corrida anterior;
+las que quedaron `PARCIAL`, `ERROR`, `SIN_DOCUMENTOS`, etc. se reintentan.
+El log se actualiza en disco referencia por referencia (no solo al final),
+así una corrida larga no pierde el progreso si se corta a medias.
+
+Si quieres forzar que se vuelva a descargar todo (o una referencia puntual),
+borra `log_referencias_procesadas.json` (o edítalo a mano y quita esa
+referencia).
+
 ## Puesta en marcha
 
 1. `pip install -r requirements.txt`

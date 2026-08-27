@@ -336,7 +336,7 @@ class LaredoExtractor:
     # EJECUCIÓN MAESTRA
     # -------------------------------------------------------------------------
 
-    def procesar_razon_social(self, razon: str, referencias: list[str], metadata: dict) -> list[dict]:
+    def procesar_razon_social(self, razon: str, referencias: list[str], metadata: dict, on_resultado=None) -> list[dict]:
         resultados = []
         credenciales = common.CREDENCIALES_LAREDO.get(razon)
         if not credenciales or not credenciales.get("usuario") or not credenciales.get("contra"):
@@ -348,6 +348,8 @@ class LaredoExtractor:
                 r["Estado"] = "SIN_CREDENCIALES"
                 r["Detalle"] = f"Sin credenciales configuradas para '{razon}' (revisa .env)."
                 resultados.append(r)
+                if on_resultado:
+                    on_resultado(r)
             return resultados
 
         self.configurar_driver()
@@ -364,11 +366,16 @@ class LaredoExtractor:
                     r["Estado"] = "SIN_METADATA"
                     r["Detalle"] = "La referencia no viene en la consulta SQL."
                     resultados.append(r)
+                    if on_resultado:
+                        on_resultado(r)
                     continue
                 logger.info(f"\n{'='*55}")
                 logger.info(f"  [{razon}] [{i}/{total}]  {ref}")
                 logger.info(f"{'='*55}")
-                resultados.append(self.procesar_referencia(ref, meta))
+                resultado = self.procesar_referencia(ref, meta)
+                resultados.append(resultado)
+                if on_resultado:
+                    on_resultado(resultado)
 
             logger.info(f"\n🎉 [{razon}] Todas sus referencias procesadas.")
 
@@ -380,10 +387,14 @@ class LaredoExtractor:
 
         return resultados
 
-    def procesar(self, grupos: dict, metadata: dict) -> list[dict]:
+    def procesar(self, grupos: dict, metadata: dict, on_resultado=None) -> list[dict]:
         """
         Punto de entrada usado por main.py.
         grupos = {clave_credencial: [Referencia, ...]}
+        on_resultado(resultado_dict): callback opcional invocado justo después de
+        procesar CADA referencia (antes de pasar a la siguiente) — usado por
+        main.py para ir guardando el log de procesadas en disco de inmediato,
+        así una corrida larga no pierde el progreso si se interrumpe a medias.
         Devuelve la lista de resultados (uno por referencia) para el reporte.
         """
         resultados = []
@@ -394,7 +405,7 @@ class LaredoExtractor:
         for razon, referencias in grupos.items():
             if not referencias:
                 continue
-            resultados.extend(self.procesar_razon_social(razon, referencias, metadata))
+            resultados.extend(self.procesar_razon_social(razon, referencias, metadata, on_resultado))
 
         logger.info("\n🎉 Todas las razones sociales (Laredo) procesadas.")
         return resultados

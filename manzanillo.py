@@ -421,7 +421,7 @@ class ManzanilloExtractor:
         except Exception as e:
             logger.warning(f"   [{ref}] ⚠ No se pudo cerrar el panel de documentos (no crítico): {e}")
 
-    def descargar_expedientes(self, referencias: list[str], metadata: dict) -> list[dict]:
+    def descargar_expedientes(self, referencias: list[str], metadata: dict, on_resultado=None) -> list[dict]:
         resultados = []
         for ref in referencias:
             meta = metadata.get(ref)
@@ -431,6 +431,8 @@ class ManzanilloExtractor:
                 r["Estado"] = "SIN_METADATA"
                 r["Detalle"] = "La referencia no viene en la consulta SQL."
                 resultados.append(r)
+                if on_resultado:
+                    on_resultado(r)
                 continue
 
             resultado = self._resultado_base(ref, meta)
@@ -443,6 +445,8 @@ class ManzanilloExtractor:
                     resultado["Estado"] = "SIN_DOCUMENTOS"
                     resultado["Detalle"] = "Sin resultados en la búsqueda rápida del portal."
                     resultados.append(resultado)
+                    if on_resultado:
+                        on_resultado(resultado)
                     continue
 
                 btn_mostrar = self.driver.find_element(By.XPATH, "//img[@title='Mostrar documentos']")
@@ -493,6 +497,8 @@ class ManzanilloExtractor:
                     pass
 
             resultados.append(resultado)
+            if on_resultado:
+                on_resultado(resultado)
 
         return resultados
 
@@ -500,8 +506,13 @@ class ManzanilloExtractor:
     # PUNTO DE ENTRADA
     # -------------------------------------------------------------------------
 
-    def procesar(self, referencias: list[str], metadata: dict) -> list[dict]:
-        """Punto de entrada usado por main.py. Devuelve resultados por referencia."""
+    def procesar(self, referencias: list[str], metadata: dict, on_resultado=None) -> list[dict]:
+        """
+        Punto de entrada usado por main.py. Devuelve resultados por referencia.
+        on_resultado(resultado_dict): callback opcional invocado justo después de
+        procesar CADA referencia — usado por main.py para ir guardando el log de
+        procesadas en disco de inmediato.
+        """
         if not referencias:
             logger.info("No hay referencias de Manzanillo para procesar.")
             return []
@@ -509,7 +520,7 @@ class ManzanilloExtractor:
         try:
             self.configurar_driver()
             self.ejecutar_login()
-            return self.descargar_expedientes(referencias, metadata)
+            return self.descargar_expedientes(referencias, metadata, on_resultado)
         finally:
             if self.driver is not None:
                 self.driver.quit()
