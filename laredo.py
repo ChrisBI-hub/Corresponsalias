@@ -60,6 +60,13 @@ EXTENSIONES_POR_CONTENT_TYPE = {
     "txt":  ".txt",
 }
 
+# ConsultaRefGrupo.aspx puede tardar bastante en pintar los bloques de
+# documento cuando la referencia tiene muchos (visto: >35s para referencias
+# que sí tenían documentos). Se usa un timeout dedicado y más generoso solo
+# para esta espera, con un reintento (recargar la página) antes de darla
+# por vacía — para no confundir "está lenta" con "no tiene documentos".
+TIMEOUT_PAGINA_REFERENCIA = 90
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -161,18 +168,35 @@ class LaredoExtractor:
             f"{URL_BASE}/ConsultaRefGrupo.aspx"
             f"?token={token}&ref={quote(ref, safe='')}&p={self.perfil}&uid={self.uid}"
         )
-        logger.info(f"   [{ref}] Cargando página de resultados...")
-        self.driver.get(url_ref)
 
-        try:
-            self.wait.until(
-                EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'G000')]"))
-            )
-        except Exception:
-            logger.warning(f"   [{ref}] ⚠ No se encontraron bloques de documentos en la carpeta.")
+        espera_larga = WebDriverWait(self.driver, TIMEOUT_PAGINA_REFERENCIA)
+        encontrado = False
+        for intento in range(2):
+            sufijo = " (reintento — la primera carga tardó demasiado)" if intento else ""
+            logger.info(f"   [{ref}] Cargando página de resultados{sufijo}...")
+            self.driver.get(url_ref)
+            try:
+                espera_larga.until(
+                    EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'G000')]"))
+                )
+                encontrado = True
+                break
+            except Exception:
+                if intento == 0:
+                    logger.warning(
+                        f"   [{ref}] ⚠ La página tardó más de {TIMEOUT_PAGINA_REFERENCIA}s en "
+                        f"cargar los documentos; recargando para reintentar una vez..."
+                    )
+
+        if not encontrado:
+            logger.warning(f"   [{ref}] ⚠ No se encontraron bloques de documentos en la carpeta (tras reintentar).")
             self.capturar_diagnostico(f"sin_documentos_{common.sanear_nombre(ref)}")
             return []
 
+        # El primer bloque en aparecer no garantiza que ya estén todos
+        # pintados si la carga es progresiva; un margen corto evita perder
+        # documentos por leer la lista a medio renderizar.
+        time.sleep(1.5)
         bloques = self.driver.find_elements(By.XPATH, "//div[contains(@class,'G000')]")
         documentos = []
         for bloque in bloques:
