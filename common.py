@@ -124,6 +124,10 @@ CREDENCIALES_LAREDO = {
         "usuario": os.getenv("LAREDO_AVENTIS_USER"),
         "contra":  os.getenv("LAREDO_AVENTIS_PASS"),
     },
+    "BIP2021": {
+        "usuario": os.getenv("LAREDO_BIP2021_USER"),
+        "contra":  os.getenv("LAREDO_BIP2021_PASS"),
+    },
 }
 
 # Mapeo directo Cliente (columna SQL) -> clave de credencial Laredo.
@@ -133,6 +137,7 @@ CLIENTE_A_CLAVE = {
     "SANOFI PASTEUR, S.A DE C.V.": "PASTEUR",
     "AZTECA VACUNAS, SA DE CV":    "AZVA2025",
     "SANOFI MEXICO S.A. DE C.V.":  None,
+    "BOEHRINGER INGELHEIM PROMECO, S.A. DE C.V.": "BIP2021",
 }
 
 
