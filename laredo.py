@@ -26,6 +26,15 @@ referencia):
      (pdf/jpeg/xml/txt) — antes se asumía PDF para todo y se descartaban
      silenciosamente los demás tipos (bug que dejaba "solo un documento").
 
+En corridas largas (cientos de referencias en una sola sesión de Firefox)
+la sesión de SLAM.Digital puede expirar a mitad de camino: el portal
+redirige a la pantalla de login en vez de mostrar ConsultaRefGrupo.aspx,
+lo que antes se reportaba erróneamente como "sin documentos" para esa
+referencia Y para todas las siguientes (nunca se detectaba ni se
+reautenticaba). Ahora pagina_actual_es_login() detecta esa redirección y
+reautenticar() vuelve a iniciar sesión con las mismas credenciales antes
+de reintentar esa referencia.
+
 Dependencias:
     pip install selenium sqlalchemy pyodbc pandas requests
     GeckoDriver: sudo apt install firefox-esr geckodriver
@@ -79,6 +88,8 @@ class LaredoExtractor:
         self.uid     = None
         self.perfil  = None
         self.session = requests.Session()
+        self._usuario_actual = None
+        self._contra_actual  = None
 
     # -------------------------------------------------------------------------
     # DRIVER
@@ -128,6 +139,37 @@ class LaredoExtractor:
         for cookie in self.driver.get_cookies():
             self.session.cookies.set(cookie["name"], cookie["value"])
 
+    def pagina_actual_es_login(self) -> bool:
+        """
+        Detecta si el driver quedó en la pantalla de login de SLAM.Digital
+        (Default.aspx) en vez de en la página que se pidió — señal de que
+        la sesión expiró a mitad de la corrida. El formulario de login
+        siempre trae el campo #uname; ConsultaRefGrupo.aspx nunca lo tiene.
+        """
+        try:
+            return bool(self.driver.find_elements(By.ID, "uname"))
+        except Exception:
+            return False
+
+    def reautenticar(self, ref: str) -> bool:
+        """
+        Vuelve a iniciar sesión con las credenciales de la razón social que
+        se está procesando (guardadas por procesar_razon_social) y relee
+        uid/perfil. Se usa cuando pagina_actual_es_login() detecta que la
+        sesión expiró a mitad de una corrida larga.
+        """
+        if not self._usuario_actual or not self._contra_actual:
+            logger.error(f"   [{ref}] ❌ No hay credenciales guardadas para reautenticar.")
+            return False
+        logger.warning(f"   [{ref}] ⚠ La sesión de SLAM.Digital expiró; reautenticando...")
+        try:
+            self.ejecutar_login(self._usuario_actual, self._contra_actual)
+            self.leer_parametros_sesion()
+            return True
+        except Exception as e:
+            logger.error(f"   [{ref}] ❌ No se pudo reautenticar: {e}")
+            return False
+
     def capturar_diagnostico(self, nombre: str):
         """
         Guarda un screenshot + el HTML de la página actual en _debug/ dentro
@@ -163,18 +205,34 @@ class LaredoExtractor:
         common.construir_metadata_y_grupos() ya las separó antes de armar
         los grupos que procesa este script.
         """
-        token   = "AutoScriptABC1234"
-        url_ref = (
-            f"{URL_BASE}/ConsultaRefGrupo.aspx"
-            f"?token={token}&ref={quote(ref, safe='')}&p={self.perfil}&uid={self.uid}"
-        )
+        token = "AutoScriptABC1234"
+
+        def _url_ref():
+            # uid/perfil pueden cambiar si hubo que reautenticar a mitad
+            # de la corrida, así que se arma de nuevo en cada intento.
+            return (
+                f"{URL_BASE}/ConsultaRefGrupo.aspx"
+                f"?token={token}&ref={quote(ref, safe='')}&p={self.perfil}&uid={self.uid}"
+            )
 
         espera_larga = WebDriverWait(self.driver, TIMEOUT_PAGINA_REFERENCIA)
         encontrado = False
-        for intento in range(2):
-            sufijo = " (reintento — la primera carga tardó demasiado)" if intento else ""
+        intentos_carga = 0   # solo cuenta los reintentos por lentitud, no las reautenticaciones
+        intentos_reauth = 0  # tope de seguridad: nunca reautenticar en bucle sin fin
+        while intentos_carga < 2:
+            sufijo = " (reintento — la primera carga tardó demasiado)" if intentos_carga else ""
             logger.info(f"   [{ref}] Cargando página de resultados{sufijo}...")
-            self.driver.get(url_ref)
+            self.driver.get(_url_ref())
+
+            if self.pagina_actual_es_login():
+                intentos_reauth += 1
+                if intentos_reauth > 2:
+                    logger.error(f"   [{ref}] ❌ Sigue cayendo en el login tras reautenticar {intentos_reauth - 1} vez(es). Se omite.")
+                    break
+                if not self.reautenticar(ref):
+                    break
+                continue  # reintenta la misma carga ya reautenticado, sin gastar un intento
+
             try:
                 espera_larga.until(
                     EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'G000')]"))
@@ -182,7 +240,8 @@ class LaredoExtractor:
                 encontrado = True
                 break
             except Exception:
-                if intento == 0:
+                intentos_carga += 1
+                if intentos_carga < 2:
                     logger.warning(
                         f"   [{ref}] ⚠ La página tardó más de {TIMEOUT_PAGINA_REFERENCIA}s en "
                         f"cargar los documentos; recargando para reintentar una vez..."
@@ -375,6 +434,9 @@ class LaredoExtractor:
                 if on_resultado:
                     on_resultado(r)
             return resultados
+
+        self._usuario_actual = credenciales["usuario"]
+        self._contra_actual  = credenciales["contra"]
 
         self.configurar_driver()
         try:
