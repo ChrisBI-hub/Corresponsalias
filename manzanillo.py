@@ -290,6 +290,7 @@ class ManzanilloExtractor:
         ext = os.path.splitext(ruta_temp)[1] or ".bin"
         destino = common.construir_ruta_destino(meta, referencia, tag, ext)
         shutil.move(ruta_temp, destino)
+        common.extraer_zip_si_aplica(destino)
         return destino
 
     def descargar_por_clasificacion(self, referencia: str, meta: dict, codigo: str, etiqueta: str, tag: str) -> int:

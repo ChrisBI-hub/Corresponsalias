@@ -20,6 +20,7 @@ import os
 import re
 import json
 import logging
+import zipfile
 from datetime import datetime
 
 import pandas as pd
@@ -207,6 +208,34 @@ def construir_ruta_destino(meta: dict, referencia: str, tag: str, extension: str
         contador += 1
 
     return destino
+
+
+def extraer_zip_si_aplica(ruta_archivo: str) -> str | None:
+    """
+    Si `ruta_archivo` es un .zip (ej. GASTOS o CASAWIN-Expedientes de
+    Manzanillo), lo descomprime en una subcarpeta a su lado con el mismo
+    nombre (sin extensión), para que el usuario no tenga que abrir el zip
+    a mano. El .zip original se conserva tal cual, junto a esa subcarpeta.
+    Devuelve la ruta de la subcarpeta creada, o None si no era un zip o
+    la extracción falló (zip corrupto/incompleto — no es fatal, el .zip
+    ya descargado sigue disponible).
+    """
+    if not ruta_archivo.lower().endswith(".zip"):
+        return None
+
+    carpeta_destino = os.path.splitext(ruta_archivo)[0]
+    try:
+        os.makedirs(carpeta_destino, exist_ok=True)
+        with zipfile.ZipFile(ruta_archivo, "r") as z:
+            z.extractall(carpeta_destino)
+        logger.info(f"   📦 Descomprimido: {os.path.basename(ruta_archivo)} → {os.path.basename(carpeta_destino)}/")
+        return carpeta_destino
+    except zipfile.BadZipFile as e:
+        logger.warning(f"   ⚠ {ruta_archivo} no es un ZIP válido o está incompleto, no se descomprimió: {e}")
+        return None
+    except OSError as e:
+        logger.warning(f"   ⚠ No se pudo descomprimir {ruta_archivo}: {e}")
+        return None
 
 
 # =============================================================================

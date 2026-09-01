@@ -42,6 +42,25 @@ Las referencias de **SANOFI MEXICO S.A. DE C.V.** que no tengan credenciales
 en el portal Laredo no se descargan; se registran en
 `faltantes_sanofi_mexico.txt` con el formato `<Referencia>-SM`.
 
+## Descompresión automática de ZIPs
+
+Algunos documentos (por ejemplo `GASTOS` en Manzanillo) se descargan como
+`.zip`. Para facilitar su uso, cada archivo `.zip` descargado se
+descomprime automáticamente en una subcarpeta a su lado con el mismo
+nombre (sin extensión); el `.zip` original se conserva tal cual junto a
+esa subcarpeta:
+
+```
+.../GASTOS.zip
+.../GASTOS/            <- contenido descomprimido
+    factura.pdf
+    ...
+```
+
+Si el zip está corrupto o incompleto la descompresión simplemente se
+omite (se avisa en el log) — el `.zip` descargado sigue disponible de
+todas formas, no se pierde nada.
+
 ## Corridas repetidas — no vuelve a descargar lo ya descargado
 
 Cada referencia procesada queda registrada en `log_referencias_procesadas.json`

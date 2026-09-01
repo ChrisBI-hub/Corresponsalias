@@ -340,6 +340,8 @@ class LaredoExtractor:
                 for chunk in resp.iter_content(chunk_size=8192):
                     f.write(chunk)
 
+            common.extraer_zip_si_aplica(destino)
+
             tamanio_kb = os.path.getsize(destino) / 1024
             logger.info(f"   [{ref}] [{etiqueta}] ✅ Guardado: {destino} ({tamanio_kb:.1f} KB)")
             return True
