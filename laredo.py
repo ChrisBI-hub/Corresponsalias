@@ -20,7 +20,10 @@ referencia):
      solo PDFs: también hay imágenes (jpeg), XML y TXT.
   3. Por cada uno: abrir VisorB.aspx con Selenium -> genera el archivo en
      /tmp/ del servidor.
-  4. Extraer la URL /tmp/{id}.{ext} del botón "Abrir" dentro del Visor.
+  4. Extraer la URL /tmp/{id}.{ext}: normalmente del botón "Abrir" dentro
+     del Visor; algunos tipos (visto en XML, también aplica a PDF/TXT) no
+     traen ese botón — en ese caso el archivo real ya está en el "src" del
+     <iframe> que lo muestra en pantalla, y se toma de ahí.
   5. Descargar el archivo con requests reutilizando cookies de Selenium,
      usando el "content_type" real que ya viene en la URL del documento
      (pdf/jpeg/xml/txt) — antes se asumía PDF para todo y se descartaban
@@ -294,19 +297,41 @@ class LaredoExtractor:
         self.driver.switch_to.window(self.driver.window_handles[-1])
 
         try:
-            btn_abrir = self.wait.until(
-                EC.presence_of_element_located(
-                    (By.XPATH, "//a[contains(@class,'btn-info') and .//span[text()='Abrir']]")
+            try:
+                btn_abrir = self.wait.until(
+                    EC.presence_of_element_located(
+                        (By.XPATH, "//a[contains(@class,'btn-info') and .//span[text()='Abrir']]")
+                    )
                 )
-            )
-            url_archivo = btn_abrir.get_attribute("href")
-            logger.info(f"   [{ref}] [{etiqueta}] Archivo generado en: {url_archivo}")
-            return url_archivo
+                url_archivo = btn_abrir.get_attribute("href")
+                logger.info(f"   [{ref}] [{etiqueta}] Archivo generado en: {url_archivo}")
+                return url_archivo
+            except Exception:
+                pass
 
-        except Exception:
-            # VERIFICAR: no se pudo confirmar contra el portal real si XML/TXT/
-            # imágenes usan el mismo botón "Abrir" que PDF en VisorB.
-            logger.error(f"   [{ref}] [{etiqueta}] ❌ No se encontró el botón 'Abrir' en VisorB.")
+            # Algunos tipos de documento (confirmado con XML "EDOCUMENT ACUSE
+            # XML"; el mismo visor lo usa también para PDF/TXT/otros, según
+            # SucceededCallback1 en el HTML de VisorB) no traen botón "Abrir":
+            # el archivo se muestra directo en un <iframe> cuyo "src" YA es
+            # la URL real y descargable del archivo
+            # (https://slamnldo.alvelais.mx/slamdigital4/tmp/{id}.{ext}).
+            # Ese <iframe> viene renderizado en el HTML inicial de la página
+            # (no por AJAX), así que basta una espera corta.
+            try:
+                espera_corta = WebDriverWait(self.driver, 8)
+                iframe = espera_corta.until(
+                    EC.presence_of_element_located(
+                        (By.XPATH, "//div[@id='hs_show_file_for_category']//iframe")
+                    )
+                )
+                url_archivo = iframe.get_attribute("src")
+                if url_archivo:
+                    logger.info(f"   [{ref}] [{etiqueta}] Archivo (visor sin botón 'Abrir') en: {url_archivo}")
+                    return url_archivo
+            except Exception:
+                pass
+
+            logger.error(f"   [{ref}] [{etiqueta}] ❌ No se encontró el botón 'Abrir' ni el iframe del visor en VisorB.")
             nombre_ref = common.sanear_nombre(ref).replace(" ", "_")
             nombre_etq = re.sub(r'[^A-Za-z0-9]+', '_', etiqueta)
             self.capturar_diagnostico(f"visor_sin_boton_abrir_{nombre_ref}_{nombre_etq}")
