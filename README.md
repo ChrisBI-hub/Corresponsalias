@@ -13,7 +13,30 @@ laredo.py       descarga todos los documentos de cada referencia LT (SLAM.Digita
 manzanillo.py   descarga CASAWIN/EXPEDIENTES/Proforma glosada/DODAs/Gastos de cada referencia MN (OWCIA)
 analisis.py     analiza los PDF de Laredo ya descargados y genera un Excel
 Sanofi_V6.sql   consulta maestra (se ejecuta tal cual, sin modificar WHERE ni fechas)
+
+reporte_acumulado_sanofi.py     genera el reporte acumulado de operaciones Sanofi 2025-2026 (Excel, segregado por BU)
+Sanofi_Acumulado_2025_2026.sql  consulta del reporte acumulado (WHERE ampliado a las 4 razones sociales Sanofi)
 ```
+
+## Reporte acumulado de operaciones (2025-2026)
+
+`reporte_acumulado_sanofi.py` genera el Excel acumulado de Importaciones,
+Exportaciones, Corresponsalías, R1/T3 y operaciones facturadas a
+terceros/pacientes de Sanofi Pasteur, Sanofi Aventis de México, Azteca
+Vacunas y Sanofi México, segregado por BU (CHC / GENMED / INV. CLÍNICA):
+
+```bash
+python reporte_acumulado_sanofi.py
+# o con rango de fechas propio:
+python reporte_acumulado_sanofi.py --fecha-ini 2025-01-01 --fecha-fin 2026-08-31
+```
+
+El archivo se genera en `salidas/` con una hoja **"Notas y Supuestos"** que
+documenta los supuestos aplicados (BU, responsable de pago en R1,
+identificación de operaciones de pacientes/terceros, pedimentos
+globales/complementarios) — **revisar esa hoja contra datos reales antes de
+enviar el reporte a Sanofi**, en particular la heurística de "Posible
+Facturado a Terceros", que no está confirmada contra la base.
 
 ## Clasificación de archivos descargados
 
