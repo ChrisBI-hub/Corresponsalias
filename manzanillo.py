@@ -207,7 +207,7 @@ class ManzanilloExtractor:
     # -------------------------------------------------------------------------
 
     def obtener_id_expediente(self):
-        """
+        r"""
         Extrae el id de expediente (segundo segmento del código que recibe
         CargarDocumentosPorClasificacion) desde cualquier nodo del árbol de
         documentos ya visible para la referencia actual. Este id lo genera
