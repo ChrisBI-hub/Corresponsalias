@@ -170,6 +170,22 @@ corrida anterior, para que se revisen y clasifiquen a mano si hace falta.
 final vía `requests` (su Firefox ya no tiene configurada ninguna
 descarga silenciosa).
 
+## Sobre `_debug`
+
+Cuando un selector no encuentra el elemento esperado en el portal
+(sesión expirada, cambio en el HTML, etc.), `capturar_diagnostico()`
+guarda ahí un screenshot (`.png`) y el HTML de la página (`.html`) para
+poder ajustar el script sin depender de reproducir el problema contra el
+portal real.
+
+A pedido del equipo, esta carpeta vive junto a `Descargas`, en la raíz
+del mismo recurso de red (`\\10.10.10.97\corresponsal_Efile\_debug`) en
+vez de en disco local — así cualquiera con acceso al share la puede
+revisar directamente. Igual que `Descargas`, solo aparece ahí si
+`RUTA_DESCARGAS` apunta al share montado; si no está configurado, cae en
+`PROYECTO_BASE/Descargas/_debug` (disco local), junto con el resto de
+`Descargas` en ese mismo escenario.
+
 ## Notas
 
 - Los scripts de Manzanillo no se pudieron probar contra el portal real

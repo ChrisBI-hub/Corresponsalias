@@ -42,9 +42,11 @@ PATH_PROYECTO_BASE  = os.getenv("PROYECTO_BASE", "/home/christian/Documentos/Cor
 
 # La carpeta final de Descargas puede vivir en un recurso de red (ej. el
 # share \\10.10.10.97\corresponsal_Efile montado localmente vía CIFS/SMB).
-# Se separa de PROYECTO_BASE a propósito: _tmp_descargas y _debug se quedan
-# en disco local (Firefox y el chequeo de descargas hacen polling cada
-# 0.5-0.8s ahí, y eso sería lento/pesado sobre un montaje de red).
+# Se separa de PROYECTO_BASE a propósito: _tmp_descargas se queda en disco
+# local (Firefox y el chequeo de descargas hacen polling cada 0.5-0.8s ahí,
+# y eso sería lento/pesado sobre un montaje de red); _debug en cambio SÍ va
+# junto a Descargas (a pedido del equipo, ver PATH_DEBUG más abajo), ya que
+# ahí no hay polling, solo una escritura puntual por cada fallo detectado.
 # Si RUTA_DESCARGAS no está en el .env, se usa PROYECTO_BASE/Descargas
 # como antes (comportamiento local, sin red).
 _RUTA_DESCARGAS_ENV = os.getenv("RUTA_DESCARGAS")
@@ -54,6 +56,13 @@ PATH_TEMP_DESCARGAS = os.path.join(PATH_PROYECTO_BASE, "_tmp_descargas")  # carp
 RUTA_FALTANTES_SM   = os.path.join(PATH_PROYECTO_BASE, "faltantes_sanofi_mexico.txt")
 RUTA_SQL            = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Sanofi_V6.sql")
 RUTA_LOG_PROCESADAS = os.path.join(PATH_PROYECTO_BASE, "log_referencias_procesadas.json")
+
+# A pedido del equipo, _debug/ (screenshots + HTML capturados cuando un
+# selector no encuentra el elemento esperado) vive junto a Descargas, no en
+# disco local: así cualquiera con acceso al share puede revisarla sin pedir
+# el archivo por separado. Va a la raíz del share (PATH_DESCARGAS_BASE), no
+# dentro de la estructura de Descargas por razón social/año/aduana.
+PATH_DEBUG = os.path.join(PATH_DESCARGAS_BASE, "_debug")
 
 try:
     os.makedirs(PATH_DESCARGAS_BASE, exist_ok=True)
@@ -98,6 +107,7 @@ if _RUTA_DESCARGAS_ENV:
         ) from e
 
 os.makedirs(PATH_TEMP_DESCARGAS, exist_ok=True)
+os.makedirs(PATH_DEBUG, exist_ok=True)
 
 # =============================================================================
 # SQL SERVER

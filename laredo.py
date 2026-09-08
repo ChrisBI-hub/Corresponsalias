@@ -175,11 +175,12 @@ class LaredoExtractor:
 
     def capturar_diagnostico(self, nombre: str):
         """
-        Guarda un screenshot + el HTML de la página actual en _debug/ dentro
-        de PROYECTO_BASE. Úsalo cuando un selector no encuentra el elemento
-        esperado: manda esos dos archivos para ajustar el XPath exacto.
+        Guarda un screenshot + el HTML de la página actual en _debug/ (a
+        pedido del equipo, vive junto a Descargas en el share, no en disco
+        local). Úsalo cuando un selector no encuentra el elemento esperado:
+        manda esos dos archivos para ajustar el XPath exacto.
         """
-        carpeta = os.path.join(common.PATH_PROYECTO_BASE, "_debug")
+        carpeta = common.PATH_DEBUG
         os.makedirs(carpeta, exist_ok=True)
         try:
             self.driver.save_screenshot(os.path.join(carpeta, f"{nombre}.png"))
