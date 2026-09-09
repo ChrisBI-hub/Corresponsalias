@@ -97,6 +97,26 @@ Si quieres forzar que se vuelva a descargar todo (o una referencia puntual),
 borra `log_referencias_procesadas.json` (o edítalo a mano y quita esa
 referencia).
 
+## Control en base de datos (BI)
+
+Al final de cada corrida, `main.py` sube el resultado de cada referencia
+procesada a SQL Server — base `BI` (mismo servidor/usuario/contraseña que
+la consulta de `Sanofi_V6.sql`), tabla `dbo.CorresponsaliasControlDescargas`.
+Es un **upsert por Referencia** (no un historial): la tabla siempre
+refleja el estado más reciente, así el equipo puede consultar ahí mismo
+qué referencias faltan por descargar o quedaron con error, sin abrir el
+Excel ni la carpeta de red.
+
+La tabla se crea sola en el primer `main.py` que corra (no hace falta
+armarla a mano). Columnas: `Referencia` (llave), `RazonSocial`, `Portal`,
+`Aduana`, `Anio`, `Pedimento`, `DocumentosEncontrados`,
+`DocumentosDescargados`, `Estado`, `Detalle`, `FechaActualizacion`.
+
+Si este paso falla (SQL Server caído, sin permisos en `BI`, etc.) solo se
+registra un warning en el log — no detiene la corrida ni afecta las
+descargas, el log local o el Excel, que ya quedaron generados antes de
+este paso.
+
 ## Puesta en marcha
 
 1. `pip install -r requirements.txt`

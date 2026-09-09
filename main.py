@@ -27,6 +27,11 @@ Flujo:
      (no solo al final), para no perder el progreso si la corrida se corta.
   7. Al final escribe REPORTE_DESCARGAS_{fecha_hora}.xlsx con qué
      referencias se descargaron correctamente y cuáles no (y por qué).
+  8. Sube ese mismo resultado a SQL Server (base BI, tabla
+     dbo.CorresponsaliasControlDescargas) — upsert por Referencia, para que
+     el equipo pueda consultar ahí el estado actual sin abrir el Excel ni
+     la carpeta de red. Si este paso falla no detiene la corrida (las
+     descargas y el Excel ya quedaron bien de todas formas).
 """
 
 import logging
@@ -87,10 +92,12 @@ def main():
     resultados_faltantes_sm = [common.resultado_faltante_sm(ref, metadata) for ref in faltantes_sm]
     todos_resultados = resultados_laredo + resultados_manzanillo + resultados_faltantes_sm
     common.escribir_reporte_excel(todos_resultados)
+    common.sincronizar_control_bd(todos_resultados)
 
     logger.info(
         "\n🎉 Proceso completo. Revisa la carpeta Descargas/, el reporte "
-        "REPORTE_DESCARGAS_*.xlsx y faltantes_sanofi_mexico.txt (si se generó)."
+        "REPORTE_DESCARGAS_*.xlsx, faltantes_sanofi_mexico.txt (si se generó) "
+        f"y la tabla {common.SQL_DATABASE_BI}.dbo.{common.NOMBRE_TABLA_CONTROL_BD}."
     )
 
 

@@ -118,6 +118,12 @@ SQL_DATABASE = os.getenv("SIR_SQL_DATABASE", "SIR")
 SQL_USER     = os.getenv("SIR_SQL_USER")
 SQL_PASS     = os.getenv("SIR_SQL_PASS")
 
+# Base de datos de control de descargas (mismo servidor y credenciales de
+# arriba, solo cambia la base): ahí se sube el estado actual de cada
+# referencia procesada (ver sincronizar_control_bd más abajo).
+SQL_DATABASE_BI = os.getenv("BI_SQL_DATABASE", "BI")
+NOMBRE_TABLA_CONTROL_BD = "CorresponsaliasControlDescargas"
+
 # =============================================================================
 # CREDENCIALES LAREDO (SLAM.Digital) por razón social
 # =============================================================================
@@ -265,6 +271,109 @@ def ejecutar_query_v6() -> pd.DataFrame:
     with engine.connect() as conn:
         df = pd.read_sql(sa.text(query_texto), conn)
     return df
+
+
+# =============================================================================
+# CONTROL EN BASE DE DATOS (BI) — estado actual por referencia
+# =============================================================================
+# A pedido del equipo: además del Excel y el log local, el estado de cada
+# referencia (descargada / faltante / con error) se sube a SQL Server, base
+# BI, tabla dbo.CorresponsaliasControlDescargas. Es un upsert por
+# Referencia (no historial): la tabla siempre refleja el resultado de la
+# corrida más reciente, para poder consultar ahí mismo qué falta sin abrir
+# el Excel ni la carpeta de red.
+
+_DDL_TABLA_CONTROL_BD = f"""
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = '{NOMBRE_TABLA_CONTROL_BD}' AND schema_id = SCHEMA_ID('dbo')
+)
+CREATE TABLE dbo.{NOMBRE_TABLA_CONTROL_BD} (
+    Referencia            VARCHAR(50)   NOT NULL PRIMARY KEY,
+    RazonSocial           VARCHAR(200)  NULL,
+    Portal                VARCHAR(20)   NULL,
+    Aduana                VARCHAR(100)  NULL,
+    Anio                  VARCHAR(10)   NULL,
+    Pedimento             VARCHAR(50)   NULL,
+    DocumentosEncontrados INT           NULL,
+    DocumentosDescargados INT           NULL,
+    Estado                VARCHAR(30)   NULL,
+    Detalle               VARCHAR(500)  NULL,
+    FechaActualizacion    DATETIME      NOT NULL DEFAULT GETDATE()
+);
+"""
+
+_MERGE_CONTROL_BD = f"""
+MERGE dbo.{NOMBRE_TABLA_CONTROL_BD} AS destino
+USING (SELECT :referencia AS Referencia) AS origen
+    ON destino.Referencia = origen.Referencia
+WHEN MATCHED THEN
+    UPDATE SET
+        RazonSocial = :razon_social,
+        Portal = :portal,
+        Aduana = :aduana,
+        Anio = :anio,
+        Pedimento = :pedimento,
+        DocumentosEncontrados = :documentos_encontrados,
+        DocumentosDescargados = :documentos_descargados,
+        Estado = :estado,
+        Detalle = :detalle,
+        FechaActualizacion = GETDATE()
+WHEN NOT MATCHED THEN
+    INSERT (Referencia, RazonSocial, Portal, Aduana, Anio, Pedimento,
+            DocumentosEncontrados, DocumentosDescargados, Estado, Detalle, FechaActualizacion)
+    VALUES (:referencia, :razon_social, :portal, :aduana, :anio, :pedimento,
+            :documentos_encontrados, :documentos_descargados, :estado, :detalle, GETDATE());
+"""
+
+
+def sincronizar_control_bd(resultados: list) -> None:
+    """
+    Sube a SQL Server (base BI, tabla dbo.CorresponsaliasControlDescargas)
+    el estado ACTUAL de cada referencia procesada en esta corrida (upsert
+    por Referencia). Se llama al final de main.py, justo después de generar
+    el Excel, con la misma lista de resultados.
+
+    No es crítico para la corrida: si falla (SQL Server caído, tabla sin
+    permisos, credenciales incompletas, etc.) solo se registra un warning
+    y se sigue — las descargas, el log y el Excel locales ya quedaron bien
+    de todas formas.
+    """
+    if not resultados:
+        return
+    if not (SQL_SERVER and SQL_USER and SQL_PASS):
+        logger.warning(
+            "⚠️  Faltan credenciales de SQL Server (SIR_SQL_*) en .env; no se "
+            "sincronizó el control en la base de datos BI."
+        )
+        return
+
+    conn_url = (
+        f"mssql+pyodbc://{SQL_USER}:{SQL_PASS}@{SQL_SERVER}/{SQL_DATABASE_BI}?"
+        f"driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes"
+    )
+    try:
+        engine = sa.create_engine(conn_url)
+        with engine.begin() as conn:
+            conn.execute(sa.text(_DDL_TABLA_CONTROL_BD))
+            for r in resultados:
+                conn.execute(sa.text(_MERGE_CONTROL_BD), {
+                    "referencia": r.get("Referencia"),
+                    "razon_social": r.get("RazonSocial"),
+                    "portal": r.get("Portal"),
+                    "aduana": r.get("Aduana"),
+                    "anio": str(r.get("Anio")) if r.get("Anio") is not None else None,
+                    "pedimento": r.get("Pedimento"),
+                    "documentos_encontrados": r.get("DocumentosEncontrados"),
+                    "documentos_descargados": r.get("DocumentosDescargados"),
+                    "estado": r.get("Estado"),
+                    "detalle": (r.get("Detalle") or "")[:500],
+                })
+        logger.info(
+            f"🗄️  Control actualizado en {SQL_DATABASE_BI}.dbo.{NOMBRE_TABLA_CONTROL_BD} "
+            f"({len(resultados)} referencia(s))."
+        )
+    except Exception as e:
+        logger.warning(f"⚠️  No se pudo sincronizar el control en la base de datos BI: {e}")
 
 
 def _extraer_anio(fecha_pago_str) -> int | None:
